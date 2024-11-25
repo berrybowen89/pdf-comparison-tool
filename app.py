@@ -221,29 +221,18 @@ with col2:
 
 # Compare button
 if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.quote2:
-    with st.spinner("Performing detailed analysis with Claude 3 Opus..."):
+    with st.spinner("Performing detailed line item analysis with Claude 3 Opus..."):
         try:
-            # First pass: Extract structured data
+            # Modified prompt to focus on line items and descriptions
             extraction_prompt = f"""
             Analyze these two sales quotes and provide a detailed line-by-line comparison.
-            Extract the following information in a structured JSON format:
+            Focus specifically on matching line items and their descriptions.
 
-            1. Line items with their details:
-               - Item description
-               - Price in both quotes
-               - Quantity in both quotes
-               - Specifications in both quotes
-               - Whether it appears in both quotes
-               - Whether pricing matches
-               - Whether specifications match
-               - Percentage price difference (if applicable)
-
-            2. Also identify:
-               - Terms and conditions differences
-               - Delivery terms
-               - Warranty information
-               - Payment terms
-               - Any special offers or discounts
+            For each line item, identify:
+            1. The exact description/specification from each quote
+            2. Whether it's an exact match, partial match, or unique to one quote
+            3. Any differences in specifications or descriptions
+            4. Which quote might have more detailed specifications
 
             Quote 1 ({st.session_state.quote1['name']}):
             {st.session_state.quote1['content']}
@@ -251,11 +240,17 @@ if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.
             Quote 2 ({st.session_state.quote2['name']}):
             {st.session_state.quote2['content']}
 
-            Format the response as structured data that can be directly converted to a table.
-            Include ALL items from both quotes, using "Not Present" for missing items.
+            Create a detailed comparison table that shows:
+            - The line item
+            - Description from Quote 1
+            - Description from Quote 2
+            - Match Status (Exact Match ✓, Partial Match ~, Only in Quote 1 [1], Only in Quote 2 [2])
+            - Important specification differences
+
+            Include ALL line items from both quotes, even if they only appear in one quote.
+            Sort items by match status, with matches first, then partial matches, then unique items.
             """
             
-            # Use Claude 3 Opus for the initial analysis
             initial_response = st.session_state.anthropic_client.messages.create(
                 model="claude-3-opus-20240229",
                 max_tokens=4096,
@@ -264,37 +259,39 @@ if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.
                     "content": extraction_prompt
                 }]
             )
+            
             # Create tabs for different views
-            tab1, tab2, tab3, tab4 = st.tabs([
-                "Comparison Table", 
-                "Detailed Analysis", 
-                "Terms & Conditions", 
-                "Executive Summary"
+            tab1, tab2, tab3 = st.tabs([
+                "Line Item Comparison", 
+                "Specification Analysis", 
+                "Summary"
             ])
             
             with tab1:
                 st.markdown("### Line Item Comparison")
                 
-                # Apply custom styling for the table
+                # Custom styling for the comparison table
                 st.markdown("""
                 <style>
-                .match { color: green; font-weight: bold; }
-                .mismatch { color: red; font-weight: bold; }
-                .highlight { background-color: #f0f2f6; }
+                .exact-match { color: green; font-weight: bold; }
+                .partial-match { color: orange; font-weight: bold; }
+                .unique-item { color: blue; font-weight: bold; }
+                .different { background-color: #fff3f3; }
                 </style>
                 """, unsafe_allow_html=True)
                 
-                # Ask Claude to format the comparison specifically for visualization
+                # Format comparison for better visualization
                 viz_prompt = """
-                Based on the analysis above, create a comparison table with the following columns:
-                1. Item Description
-                2. Quote 1 Price
-                3. Quote 2 Price
-                4. Price Difference %
-                5. Match Status (✓ or ✗)
-                6. Notes
-                
-                Format this as a markdown table.
+                Based on the analysis above, create a comparison table with these exact columns:
+                | Line Item | Quote 1 Description | Quote 2 Description | Match Status | Key Differences |
+
+                Use these symbols for Match Status:
+                ✓ = Exact match
+                ~ = Partial match
+                [1] = Only in Quote 1
+                [2] = Only in Quote 2
+
+                Format as a markdown table focusing on clarity and readability.
                 """
                 
                 viz_response = st.session_state.anthropic_client.messages.create(
@@ -306,27 +303,29 @@ if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.
                     ]
                 )
                 
-                # Display the formatted table
+                # Display the comparison table
                 st.markdown(viz_response.content[0].text)
                 
-                # Add a download button for the comparison
+                # Add a download button
                 st.download_button(
                     "Download Comparison as CSV",
                     viz_response.content[0].text,
-                    "quote_comparison.csv",
+                    "line_item_comparison.csv",
                     "text/csv"
                 )
             
             with tab2:
-                st.markdown("### Detailed Analysis")
+                st.markdown("### Specification Analysis")
                 
                 analysis_prompt = """
-                Based on the comparison above, provide a detailed analysis including:
-                1. Major price differences and their impact
-                2. Specification variations and their significance
-                3. Value analysis comparing both quotes
-                4. Potential negotiation points
-                5. Technical advantages/disadvantages
+                Based on the comparison above, provide a detailed analysis of:
+                1. Key specification differences between matching items
+                2. Items with significantly different descriptions
+                3. Unique items in each quote and their significance
+                4. Which quote provides more detailed specifications overall
+                5. Any missing important specifications in either quote
+                
+                Focus on technical and functional differences rather than pricing.
                 """
                 
                 analysis_response = st.session_state.anthropic_client.messages.create(
@@ -341,39 +340,18 @@ if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.
                 st.markdown(analysis_response.content[0].text)
             
             with tab3:
-                st.markdown("### Terms & Conditions Comparison")
-                
-                terms_prompt = """
-                Compare the terms and conditions of both quotes, including:
-                1. Payment terms
-                2. Delivery conditions
-                3. Warranty terms
-                4. Support/maintenance terms
-                5. Legal requirements and compliance
-                Present this in a clear, structured format.
-                """
-                
-                terms_response = st.session_state.anthropic_client.messages.create(
-                    model="claude-3-opus-20240229",
-                    max_tokens=4096,
-                    messages=[
-                        {"role": "assistant", "content": initial_response.content[0].text},
-                        {"role": "user", "content": terms_prompt}
-                    ]
-                )
-                
-                st.markdown(terms_response.content[0].text)
-            
-            with tab4:
-                st.markdown("### Executive Summary")
+                st.markdown("### Summary of Differences")
                 
                 summary_prompt = """
-                Provide a concise executive summary of the comparison, including:
-                1. Total cost comparison
-                2. Key differentiators
-                3. Best value analysis
-                4. Recommended choice with justification
-                Limit this to key points that would be relevant for decision makers.
+                Provide a concise summary of the line item comparison:
+                1. Total number of line items in each quote
+                2. Number of exact matches
+                3. Number of partial matches
+                4. Unique items in each quote
+                5. Key areas where specifications differ significantly
+                6. Which quote is more detailed/comprehensive in specifications
+                
+                Focus only on the items and their descriptions, not on pricing or commercial terms.
                 """
                 
                 summary_response = st.session_state.anthropic_client.messages.create(
@@ -387,32 +365,26 @@ if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.
                 
                 st.markdown(summary_response.content[0].text)
                 
-                # Add key metrics
+                # Add metrics
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.metric("Total Price Difference", "Calculated from comparison")
+                    st.metric("Total Line Items", "From analysis")
                 with col2:
-                    st.metric("Number of Matching Items", "From analysis")
+                    st.metric("Exact Matches", "From analysis")
                 with col3:
-                    st.metric("Value Score", "Based on analysis")
+                    st.metric("Items Needing Review", "From analysis")
 
         except Exception as e:
             st.error(f"Error in comparison: {str(e)}")
 
-# Clear button
-if st.button("Clear All"):
-    st.session_state.quote1 = None
-    st.session_state.quote2 = None
-    st.session_state.comparison_results = None
-    st.rerun()
-
-# Footer with legend and information
+# Update footer with new legend
 st.markdown("---")
 st.markdown("""
     **Legend:**
-    - ✓ : Exact match between quotes
-    - ✗ : Difference found
-    - Percentages show price differences (Quote 2 vs Quote 1)
+    - ✓ : Exact match in descriptions
+    - ~ : Partial match (similar items with some differences)
+    - [1] : Item only present in Quote 1
+    - [2] : Item only present in Quote 2
     
-    **Note:** Analysis performed using Claude 3 Opus for maximum accuracy
+    **Note:** Analysis focuses on line items and specifications only
 """)
