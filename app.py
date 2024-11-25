@@ -7,7 +7,6 @@ import pandas as pd
 from difflib import SequenceMatcher
 import pdfplumber
 import re
-import json
 from typing import List, Dict
 import fitz  # PyMuPDF
 
@@ -41,13 +40,16 @@ def extract_pdf_text_pdfplumber(file) -> str:
         with pdfplumber.open(file) as pdf:
             pages_text = []
             for page in pdf.pages:
+                # Extract text with better handling of tables and layouts
                 text = page.extract_text(x_tolerance=3, y_tolerance=3)
+                # Extract tables and format them properly
                 tables = page.extract_tables()
                 formatted_tables = []
                 for table in tables:
                     formatted_table = '\n'.join(['\t'.join([str(cell) if cell else '' for cell in row]) for row in table])
                     formatted_tables.append(formatted_table)
                 
+                # Combine regular text and tables
                 page_text = text + '\n' + '\n'.join(formatted_tables)
                 pages_text.append(page_text)
             
@@ -151,8 +153,7 @@ def read_file(file) -> Dict[str, str]:
     except Exception as e:
         st.error(f"Error reading file {file.name}: {str(e)}")
         return {'text': '', 'tables': [], 'raw_text': ''}
-        
-# Create two columns for file uploads
+        # Create two columns for file uploads
 col1, col2 = st.columns(2)
 
 # Modified file upload handling
@@ -218,42 +219,6 @@ with col2:
                     st.markdown(f"**Table {i+1}**")
                     st.dataframe(pd.DataFrame(table))
 
-def compare_quotes(quote1_data, quote2_data):
-    comparison_prompt = f"""
-    Thoroughly compare the attached sales quotes, analyzing both text and tables. Generate a structured JSON response with these sections:
-
-    1. Summary: Key insights and differences between the quotes
-    2. LineItemComparison: Markdown table comparing each line item 
-       Columns: 
-       - LineItem: Description of item
-       - Quote1Value: Value from Quote 1 (numeric where applicable)  
-       - Quote2Value: Value from Quote 2 (numeric where applicable)
-       - MatchStatus: Exact match (✓), Partial match (~), Only in Quote 1 ([1]), Only in Quote 2 ([2])
-       - Difference: Difference between Quote1Value and Quote2Value (blank if n/a)
-    3. TableComparison: Insights from comparing any tables
-    4. UniqueItems: List items unique to each quote
-    5. Statistics:
-       - TotalItems: Total line items compared
-       - ExactMatches: Number of exact matches  
-       - PartialMatches: Number of partial or fuzzy matches
-       - ItemsOnlyQuote1: Number of items only in Quote 1
-       - ItemsOnlyQuote2: Number of items only in Quote 2
-
-    Quote 1: {quote1_data}
-    Quote 2: {quote2_data}
-    """
-    
-    response = st.session_state.anthropic_client.messages.create(
-        model="claude-3-opus-20240229",
-        max_tokens=4096,
-        messages=[{
-            "role": "user",
-            "content": comparison_prompt
-        }]
-    )
-    
-    return response.content[0].text
-
 # Compare button
 if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.quote2:
     # Create a progress bar
@@ -265,44 +230,57 @@ if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.
         status_text.text("Stage 1/4: Processing documents...")
         progress_bar.progress(25)
         
+        comparison_prompt = f"""
+        Compare these two quotes and create a clear markdown table showing ONLY:
+        | Line Item | Quote 1 Description | Quote 2 Description | Match Status |
+
+        Quote 1: {st.session_state.quote1['content']}
+        Quote 2: {st.session_state.quote2['content']}
+
+        Use these match indicators:
+        ✓ = Exact match
+        ~ = Partial match
+        [1] = Only in Quote 1
+        [2] = Only in Quote 2
+
+        After the table, list:
+        1. Total number of items
+        2. Number of exact matches
+        3. Number of partial matches
+        4. Items unique to each quote
+        """
+        
         # Stage 2: Sending to Claude
         status_text.text("Stage 2/4: Analyzing with Claude...")
         progress_bar.progress(50)
         
-        comparison_result = compare_quotes(st.session_state.quote1['content'], st.session_state.quote2['content'])
-        comparison_json = json.loads(comparison_result)
+        response = st.session_state.anthropic_client.messages.create(
+            model="claude-3-opus-20240229",
+            max_tokens=4096,
+            messages=[{
+                "role": "user",
+                "content": comparison_prompt
+            }]
+        )
         
         # Stage 3: Processing Results
         status_text.text("Stage 3/4: Processing results...")
         progress_bar.progress(75)
         
         # Stage 4: Displaying Results
-        status_text.text("Stage 4/4: Generating comparison...")
+        status_text.text("Stage 4/4: Generating comparison table...")
         progress_bar.progress(90)
         
-        # Display results
-        st.markdown("### Comparison Summary")
-        st.markdown(comparison_json['Summary'])
-        
+        # Display final results
         st.markdown("### Line Item Comparison")
-        st.markdown(comparison_json['LineItemComparison'])
-        
-        if comparison_json['TableComparison']:
-            st.markdown("### Table Comparison")
-            st.markdown(comparison_json['TableComparison'])
-        
-        st.markdown("### Unique Items")
-        st.markdown(comparison_json['UniqueItems'])
-        
-        st.markdown("### Comparison Statistics")
-        st.json(comparison_json['Statistics'])
+        st.markdown(response.content[0].text)
         
         # Add download button
         st.download_button(
             "Download Comparison",
-            comparison_result,
-            "comparison.json",
-            "application/json"
+            response.content[0].text,
+            "comparison.csv",
+            "text/csv"
         )
         
         # Complete the progress bar
