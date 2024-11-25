@@ -2,7 +2,6 @@ streamlit
 anthropic
 pypdf
 python-docx
+pandas
 pdfplumber
 PyMuPDF
-pandas
-json
