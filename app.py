@@ -5,10 +5,10 @@ import docx
 import io
 import pandas as pd
 from difflib import SequenceMatcher
-import pdfplumber  # Added for better PDF extraction
+import pdfplumber
 import re
 from typing import List, Dict
-import fitz  # PyMuPDF for even better PDF handling
+import fitz  # PyMuPDF
 
 # Streamlit page config
 st.set_page_config(page_title="Sales Quote Comparison", page_icon="💼", layout="wide")
@@ -25,6 +25,14 @@ try:
 except Exception as e:
     st.error("Please configure your API key in Streamlit secrets")
     st.stop()
+
+# Initialize session state
+if 'quote1' not in st.session_state:
+    st.session_state.quote1 = None
+if 'quote2' not in st.session_state:
+    st.session_state.quote2 = None
+if 'comparison_results' not in st.session_state:
+    st.session_state.comparison_results = None
 
 def extract_pdf_text_pdfplumber(file) -> str:
     """Extract text from PDF using pdfplumber with enhanced formatting."""
@@ -51,15 +59,13 @@ def extract_pdf_text_pdfplumber(file) -> str:
         return ""
 
 def extract_pdf_text_pymupdf(file) -> str:
-    """Extract text from PDF using PyMuPDF for better formatting and table recognition."""
+    """Extract text from PDF using PyMuPDF for better formatting."""
     try:
-        # Convert StreamitUploadedFile to bytes for PyMuPDF
         file_bytes = file.getvalue()
         doc = fitz.open(stream=file_bytes, filetype="pdf")
         
         pages_text = []
         for page in doc:
-            # Get the text blocks with their coordinates and formatting
             blocks = page.get_text("dict")["blocks"]
             page_text = []
             
@@ -83,13 +89,9 @@ def extract_pdf_text_pymupdf(file) -> str:
 
 def clean_text(text: str) -> str:
     """Clean and normalize extracted text."""
-    # Remove excessive whitespace
     text = re.sub(r'\s+', ' ', text)
-    # Remove special characters but keep important punctuation
     text = re.sub(r'[^\w\s.,;:$%()-]', '', text)
-    # Normalize line endings
     text = text.replace('\r', '\n')
-    # Remove empty lines
     text = '\n'.join(line.strip() for line in text.split('\n') if line.strip())
     return text
 
@@ -100,12 +102,11 @@ def extract_tables_from_text(text: str) -> List[List[str]]:
     
     lines = text.split('\n')
     for line in lines:
-        # Heuristic: lines with multiple tabs or consistent separators might be table rows
         if '\t' in line or '  ' in line:
             cells = re.split(r'\t|  +', line.strip())
             current_table.append(cells)
         elif current_table:
-            if len(current_table) > 1:  # Only keep tables with multiple rows
+            if len(current_table) > 1:
                 tables.append(current_table)
             current_table = []
     
@@ -118,21 +119,13 @@ def read_file(file) -> Dict[str, str]:
     """Enhanced file reading with better PDF handling and text preprocessing."""
     try:
         if file.type == "application/pdf":
-            # Try multiple PDF extraction methods
             text_pdfplumber = extract_pdf_text_pdfplumber(file)
             text_pymupdf = extract_pdf_text_pymupdf(file)
             
-            # Combine results, preferring the one with more content
             text = text_pdfplumber if len(text_pdfplumber) > len(text_pymupdf) else text_pymupdf
-            
-            # Extract and format tables
             tables = extract_tables_from_text(text)
             formatted_tables = ['\n'.join(['\t'.join(row) for row in table]) for table in tables]
-            
-            # Combine regular text and formatted tables
             final_text = text + '\n\n' + '\n\n'.join(formatted_tables)
-            
-            # Clean and normalize the text
             final_text = clean_text(final_text)
             
             return {
@@ -160,50 +153,8 @@ def read_file(file) -> Dict[str, str]:
     except Exception as e:
         st.error(f"Error reading file {file.name}: {str(e)}")
         return {'text': '', 'tables': [], 'raw_text': ''}
-
-# Update requirements.txt:
-# streamlit
-# anthropic
-# pypdf
-# python-docx
-# pdfplumber
-# PyMuPDF
-
-# [Previous code remains the same until the file upload section]
-
-# Modified file upload handling
-with col1:
-    st.subheader("Quote 1")
-    quote1_file = st.file_uploader(
-        "Upload first quote",
-        type=['pdf', 'docx', 'txt'],
-        key="quote1_uploader"
-    )
-    if quote1_file:
-        extracted_data = read_file(quote1_file)
-        st.session_state.quote1 = {
-            'name': quote1_file.name,
-            'content': extracted_data['text'],
-            'tables': extracted_data['tables'],
-            'raw_content': extracted_data['raw_text']
-        }
-        st.success(f"Quote 1 uploaded: {quote1_file.name}")
-        
-        # Show preview with tabs for different views
-        preview_tab1, preview_tab2 = st.tabs(["Processed Text", "Raw Text"])
-        with preview_tab1:
-            st.text(extracted_data['text'][:1000] + "...")
-        with preview_tab2:
-            st.text(extracted_data['raw_text'][:1000] + "...")
-            
-        # Show detected tables
-        if extracted_data['tables']:
-            with st.expander("View Detected Tables"):
-                for i, table in enumerate(extracted_data['tables']):
-                    st.markdown(f"**Table {i+1}**")
-                    st.dataframe(pd.DataFrame(table))
-
-# [Same for Quote 2 upload section]# ... (previous code remains the same until file upload section)
+        # Create two columns for file uploads
+col1, col2 = st.columns(2)
 
 # Modified file upload handling
 with col1:
@@ -313,7 +264,6 @@ if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.
                     "content": extraction_prompt
                 }]
             )
-            
             # Create tabs for different views
             tab1, tab2, tab3, tab4 = st.tabs([
                 "Comparison Table", 
