@@ -5,10 +5,11 @@ import docx
 import io
 
 # Streamlit page config
-st.set_page_config(page_title="Claude Multi-Document Processor", page_icon="📚", layout="wide")
+st.set_page_config(page_title="Sales Quote Comparison", page_icon="💼", layout="wide")
 
 # Initialize Streamlit page
-st.title("Claude Multi-Document Processor")
+st.title("Sales Quote Comparison Tool")
+st.markdown("Upload two sales quotes to get a detailed line-by-line comparison")
 
 # Secure API key handling
 try:
@@ -20,8 +21,10 @@ except Exception as e:
     st.stop()
 
 # Initialize session state for documents
-if 'documents' not in st.session_state:
-    st.session_state.documents = {}
+if 'quote1' not in st.session_state:
+    st.session_state.quote1 = None
+if 'quote2' not in st.session_state:
+    st.session_state.quote2 = None
 
 def read_pdf(file):
     pdf_reader = pypdf.PdfReader(file)
@@ -40,103 +43,165 @@ def read_docx(file):
 def read_txt(file):
     return file.getvalue().decode('utf-8')
 
-# File uploader for multiple files
-uploaded_files = st.file_uploader(
-    "Upload documents (PDF, DOCX, or TXT)", 
-    type=['pdf', 'docx', 'txt'],
-    accept_multiple_files=True
+def read_file(file):
+    if file.type == "application/pdf":
+        return read_pdf(file)
+    elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        return read_docx(file)
+    else:  # txt files
+        return read_txt(file)
+
+# Create two columns for file uploads
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("Quote 1")
+    quote1_file = st.file_uploader(
+        "Upload first quote",
+        type=['pdf', 'docx', 'txt'],
+        key="quote1_uploader"
+    )
+    if quote1_file:
+        st.session_state.quote1 = {
+            'name': quote1_file.name,
+            'content': read_file(quote1_file)
+        }
+        st.success(f"Quote 1 uploaded: {quote1_file.name}")
+        with st.expander("Preview Quote 1"):
+            st.text(st.session_state.quote1['content'][:1000] + "...")
+
+with col2:
+    st.subheader("Quote 2")
+    quote2_file = st.file_uploader(
+        "Upload second quote",
+        type=['pdf', 'docx', 'txt'],
+        key="quote2_uploader"
+    )
+    if quote2_file:
+        st.session_state.quote2 = {
+            'name': quote2_file.name,
+            'content': read_file(quote2_file)
+        }
+        st.success(f"Quote 2 uploaded: {quote2_file.name}")
+        with st.expander("Preview Quote 2"):
+            st.text(st.session_state.quote2['content'][:1000] + "...")
+
+# Comparison Options
+st.subheader("Comparison Options")
+comparison_type = st.selectbox(
+    "What type of comparison would you like?",
+    options=[
+        "Full line-by-line comparison",
+        "Compare prices only",
+        "Compare specifications only",
+        "Compare terms and conditions",
+        "Highlight key differences",
+        "Summarize advantages of each quote"
+    ]
 )
 
-# Process uploaded files
-for uploaded_file in uploaded_files:
-    if uploaded_file.name not in st.session_state.documents:
+specific_focus = st.multiselect(
+    "Any specific aspects to focus on?",
+    options=[
+        "Pricing structure",
+        "Delivery terms",
+        "Warranty details",
+        "Payment terms",
+        "Technical specifications",
+        "Service level agreements"
+    ]
+)
+
+# Compare button
+if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.quote2:
+    st.write("### Comparison Results")
+    
+    with st.spinner("Analyzing quotes..."):
         try:
-            if uploaded_file.type == "application/pdf":
-                text = read_pdf(uploaded_file)
-            elif uploaded_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-                text = read_docx(uploaded_file)
-            else:  # txt files
-                text = read_txt(uploaded_file)
+            # Prepare the prompt based on comparison type and specific focus
+            prompt = f"""
+            I have two sales quotes to compare. Please provide a detailed {comparison_type}.
             
-            st.session_state.documents[uploaded_file.name] = text
-        except Exception as e:
-            st.error(f"Error reading {uploaded_file.name}: {str(e)}")
-
-# Display uploaded documents
-if st.session_state.documents:
-    st.success(f"Successfully uploaded {len(st.session_state.documents)} documents")
-    
-    # Create two columns
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.write("### Uploaded Documents:")
-        for doc_name in st.session_state.documents.keys():
-            st.write(f"📄 {doc_name}")
-    
-        # Option to clear all documents
-        if st.button("Clear All Documents"):
-            st.session_state.documents = {}
-            st.rerun()
-    
-    with col2:
-        # Document selection for preview
-        selected_doc = st.selectbox(
-            "Select a document to preview:",
-            options=list(st.session_state.documents.keys())
-        )
-        if selected_doc:
-            with st.expander("Document Preview"):
-                st.text(st.session_state.documents[selected_doc][:1000] + "...")
-
-    # User question about the documents
-    st.write("### Ask Questions About Your Documents")
-    user_question = st.text_input(
-        "What would you like to know about these documents?",
-        placeholder="e.g., 'Compare these documents' or 'What are the main points from all documents?'"
-    )
-    
-    if user_question:
-        with st.spinner("Processing with Claude 3.5 Sonnet..."):
-            try:
-                # Prepare document content
-                all_docs_content = "\n\n---DOCUMENT SEPARATOR---\n\n".join(
-                    f"Document: {name}\nContent:\n{content}" 
-                    for name, content in st.session_state.documents.items()
-                )
+            Focus specifically on these aspects: {', '.join(specific_focus) if specific_focus else 'all aspects'}
+            
+            Quote 1 ({st.session_state.quote1['name']}):
+            {st.session_state.quote1['content']}
+            
+            Quote 2 ({st.session_state.quote2['name']}):
+            {st.session_state.quote2['content']}
+            
+            Please provide:
+            1. A line-by-line comparison of key elements
+            2. Price comparison and analysis
+            3. Notable differences in terms and conditions
+            4. Advantages and disadvantages of each quote
+            5. Recommendations based on the comparison
+            
+            Format the response in a clear, structured way with appropriate headers and bullet points.
+            """
+            
+            response = st.session_state.anthropic_client.messages.create(
+                model="claude-3-sonnet-20240229",
+                max_tokens=4096,
+                messages=[{
+                    "role": "user",
+                    "content": prompt
+                }]
+            )
+            
+            # Display results in tabs
+            tab1, tab2, tab3 = st.tabs(["Detailed Comparison", "Summary", "Raw Text"])
+            
+            with tab1:
+                st.markdown(response.content[0].text)
+            
+            with tab2:
+                st.markdown("""
+                ### Quick Summary
+                """)
                 
-                # Create message with all documents and question
-                response = st.session_state.anthropic_client.messages.create(
-                    model="claude-3-sonnet-20240229",  # Using Claude 3.5 Sonnet
-                    max_tokens=4096,
+                # Create a second prompt for a brief summary
+                summary_prompt = f"""
+                Based on the comparison above, provide a very brief executive summary (3-4 bullet points)
+                of the key differences between these quotes and a clear recommendation.
+                Focus on price, value, and key differentiators.
+                """
+                
+                summary_response = st.session_state.anthropic_client.messages.create(
+                    model="claude-3-sonnet-20240229",
+                    max_tokens=1000,
                     messages=[
-                        {
-                            "role": "user",
-                            "content": (
-                                f"I have multiple documents to analyze. Here they are:\n\n"
-                                f"{all_docs_content}\n\n"
-                                f"Question: {user_question}"
-                            )
-                        }
+                        {"role": "user", "content": prompt},
+                        {"role": "assistant", "content": response.content[0].text},
+                        {"role": "user", "content": summary_prompt}
                     ]
                 )
                 
-                # Display response in a nice format
-                st.write("### Claude's Response:")
-                st.markdown(response.content[0].text)
-                
-            except Exception as e:
-                st.error(f"Error processing request: {str(e)}")
+                st.markdown(summary_response.content[0].text)
+            
+            with tab3:
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.text_area("Quote 1 Raw Text", st.session_state.quote1['content'], height=300)
+                with col2:
+                    st.text_area("Quote 2 Raw Text", st.session_state.quote2['content'], height=300)
+            
+        except Exception as e:
+            st.error(f"Error processing comparison: {str(e)}")
 
-else:
-    st.info("Please upload some documents to begin.")
+# Clear button
+if st.button("Clear All"):
+    st.session_state.quote1 = None
+    st.session_state.quote2 = None
+    st.rerun()
 
 # Add a footer with usage information
 st.markdown("---")
 st.markdown("""
     **Usage Notes:**
-    - You can upload multiple documents of different types (PDF, DOCX, TXT)
-    - Each document is processed independently
-    - Questions can be asked about individual documents or relationships between documents
-    - Using Claude 3.5 Sonnet for optimal performance and cost-effectiveness
+    - Upload two sales quotes in PDF, DOCX, or TXT format
+    - Select the type of comparison you need
+    - Choose specific aspects to focus on
+    - Get a detailed comparison with recommendations
+    - Using Claude 3.5 Sonnet for optimal analysis
 """)
