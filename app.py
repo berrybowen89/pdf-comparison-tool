@@ -1,109 +1,23 @@
 import streamlit as st
 from anthropic import Anthropic
-from rapidfuzz import fuzz
 import pypdf
 import docx
 import io
 import pandas as pd
+from difflib import SequenceMatcher
 import pdfplumber
 import re
-import time
 from typing import List, Dict
-import fitz
+import fitz  # PyMuPDF
 
-variables = [
-    {"var": "Project:", "var_name": "Project"},
-    {"var": "Address:", "var_name": "Address"},
-    {"var": "Date:", "var_name": "Date"},
-    {"var": "Villa Model:", "var_name": "Villa Model"},
-    {"var": "Factory Print Number:", "var_name": "Model Number"},
-    {"var": "Unit Dimensions:", "var_name": "Construction Type"},
-    {"var": "Number of Modules:", "var_name": "Number of Modules"},
-    {"var": "Roof Pitch", "var_name": "Roof Pitch"},
-    {"var": "Roof Shingles:", "var_name": "Roof Shingles"},
-    {"var": "Interior Ceiling", "var_name": "Interior Ceiling"},
-    {"var": "Clerestory Windows", "var_name": "Clerestory Windows"},
-    {"var": 'Eaves', "var_name": "Eaves Attach"},
-    {"var": '16" Front and Rear Overhang', "var_name": "Front and Rear Overhang"},
-    {"var": "Fire Sprinklers", "var_name": "Fire Sprinklers"},
-    {"var": "Electrical Panel", "var_name": "Electrical Panel"},
-    {"var": "Covered Porch", "var_name": "Covered Porch"},
-    {"var": "Mirrored Floorplan (side to side)", "var_name": "Mirrored Floorplan"},
-    {"var": "Flipped Floorplan (end to end)", "var_name": "Flipped Floorplan"},
-    {"var": "Alternate Kitchen Layout", "var_name": "Alternate Kitchen Layout"},
-    {"var": "Larger Windows", "var_name": "Larger Windows"},
-    {"var": "Sliding Glass Door(s)", "var_name": "Sliding Glass Door(s)"},
-    {"var": "Skylight(s)", "var_name": "Skylight(s)"},
-    {"var": "Den in place of bedroom", "var_name": "Den in place of bedroom"},
-    {"var": "Alternate Laundry Room (1200A)", "var_name": "Alternate Laundry Room"},
-    {"var": "Front Exterior Door Type", "var_name": "Front Exterior Door Type"},
-    {"var": "Rear Exterior Door Type", "var_name": "Rear Exterior Door Type"},
-    {"var": "Ex. Body Paint", "var_name": "Exterior Body Paint"},
-    {"var": "Ext. Fascia & Trim", "var_name": "Exterior Fascia & Trim"},
-    {"var": "Lap Siding (fiber cement)", "var_name": "Lap Siding"},
-    {"var": "Stucco Option", "var_name": "Stucco Option"},
-    {"var": "Kitchen/Bath Flooring Type", "var_name": "Kitchen/Bath Flooring Type"},
-    {"var": "Kitchen/Bath Flooring Color", "var_name": "Kitchen/Bath Flooring Color"},
-    {"var": "Living Room Flooring Type", "var_name": "Living Room Flooring Type"},
-    {"var": "Living Room Flooring Color", "var_name": "Living Room Flooring Color"},
-    {"var": "Bedroom Flooring Type", "var_name": "Bedroom Flooring Type"},
-    {"var": "Bedroom Flooring Color", "var_name": "Bedroom Flooring Color"},
-    {"var": "Shaker Cabinet Doors (Upper)", "var_name": "Upper Cabinet Doors"},
-    {"var": "Shaker Cabinet Doors (Lower)", "var_name": "Lower Cabinet Doors"},
-    {"var": "Kitchen Sink", "var_name": "OP001618"},
-    {"var": "Countertop Material", "var_name": "Countertop Material"},
-    {"var": "Optional Island", "var_name": "Optional Island"},
-    {"var": "Cabinet Hardware Type", "var_name": "Cabinet Hardware Type"},
-    {"var": "Cabinet Hardware Finish", "var_name": "Cabinet Hardware Finish"},
-    {"var": "Interior Door Hardware", "var_name": "Interior Door Hardware"},
-    {"var": "Additional Recessed Lights", "var_name": "Additional Recessed Lights"},
-    {"var": "Wire for A/C and Condenser Upgrade", "var_name": "A/C and Condenser Wiring"},
-    {"var": "Washer Dryer Upgrade", "var_name": "Washer Dryer Upgrade"},
-    {"var": "Thermostat", "var_name": "Thermostat"},
-    {"var": "Appliances", "var_name": "Appliances"},
-    {"var": "Optional Bathroom Window", "var_name": "Optional Bathroom Window"},
-    {"var": "Primary Shower Type", "var_name": "Primary Shower Type"},
-    {"var": "Secondary Shower Type", "var_name": "Secondary Shower Type"}
-]
-
-matching_table = [
-    {'villa_var': 'Factory Print Number:', 'factory_code': 'Model No.:'},
-    {'villa_var': 'Villa Model:', 'factory_code': 'Construction Type'},
-    {'villa_var': 'Unit Dimensions:', 'factory_code': 'Model Size'},
-    {'villa_var': 'Interior Ceiling', 'factory_code': 'OP000048'},
-    {'villa_var': 'Roof Pitch', 'factory_code': 'OP000049'},
-    {'villa_var': 'Roof Pitch', 'factory_code': 'OP001534'},
-    {'villa_var': 'Skylight(s)', 'factory_code': 'OP000511'},
-    {'villa_var': 'Skylight(s)', 'factory_code': 'OP000512'},
-    {'villa_var': 'Clerestory Windows', 'factory_code': 'OP001603'},
-    {'villa_var': '16" Front and Rear Overhang', 'factory_code': 'OP001516'},
-    {'villa_var': 'Eaves', 'factory_code': 'OP001028'},
-    {'villa_var': 'Ex. Body Paint', 'factory_code': 'OP001610'},
-    {'villa_var': 'Ext. Fascia & Trim', 'factory_code': 'OP001609'},
-    {'villa_var': 'Ext. Fascia & Trim', 'factory_code': 'OP001283'},
-    {'villa_var': 'Roof Shingles', 'factory_code': 'OP000080'},
-    {'villa_var': 'Optional Bathroom Window', 'factory_code': 'OP001057'},
-    {'villa_var': 'Front Exterior Door Type', 'factory_code': 'OP000073'},
-    {'villa_var': 'Rear Exterior Door Type', 'factory_code': 'OP001112'},
-    {'villa_var': 'Electrical Panel', 'factory_code': 'OP001622'},
-    {'villa_var': 'Thermostat', 'factory_code': 'OP001194'},
-    {'villa_var': 'Shaker Cabinet Doors (Upper)', 'factory_code': 'OP001602'},
-    {'villa_var': 'Shaker Cabinet Doors (Lower)', 'factory_code': 'OP001602'},
-    {'villa_var': 'Kitchen/Bath Flooring Type', 'factory_code': 'OP001088'},
-    {'villa_var': 'Kitchen/Bath Flooring Color', 'factory_code': 'OP001088'},
-    {'villa_var': 'Living Room Flooring Type', 'factory_code': 'OP001088'},
-    {'villa_var': 'Living Room Flooring Color', 'factory_code': 'OP001088'},
-    {'villa_var': 'Bedroom Flooring Type', 'factory_code': 'OP001088'},
-    {'villa_var': 'Bedroom Flooring Color', 'factory_code': 'OP001088'},
-    {'villa_var': 'Primary Shower Type', 'factory_code': 'OP001002'},
-    {'villa_var': 'Secondary Shower Type', 'factory_code': 'OP000110'}
-]
 # Streamlit page config
 st.set_page_config(page_title="Sales Quote Comparison", page_icon="💼", layout="wide")
+
+# Initialize Streamlit page
 st.title("Sales Quote Line Item Comparison")
 st.markdown("Using Claude 3 Opus for Enhanced Analysis")
 
-# Initialize Anthropic client
+# Secure API key handling
 try:
     if 'anthropic_client' not in st.session_state:
         anthropic_api_key = st.secrets["ANTHROPIC_API_KEY"]
@@ -113,203 +27,269 @@ except Exception as e:
     st.stop()
 
 # Initialize session state
-if 'quote1' not in st.session_state: st.session_state.quote1 = None
-if 'quote2' not in st.session_state: st.session_state.quote2 = None
-if 'comparison_results' not in st.session_state: st.session_state.comparison_results = None
+if 'quote1' not in st.session_state:
+    st.session_state.quote1 = None
+if 'quote2' not in st.session_state:
+    st.session_state.quote2 = None
+if 'comparison_results' not in st.session_state:
+    st.session_state.comparison_results = None
 
-def normalize_value(value):
-    if value is None: return ""
-    return "".join(e for e in str(value).strip().lower() if e.isalnum() or e.isspace())
-
-def fuzzy_match(val1, val2, threshold=50):
-    if not val1 or not val2: return False
-    return fuzz.ratio(val1, val2) >= threshold
-
-def robust_match(villa_value, factory_value):
-    if any(x is None for x in [villa_value, factory_value]): return False
-    
-    if "roof pitch" in str(factory_value).lower():
-        factory_value = str(factory_value).replace("ROOF PITCH","")
-    if "roof pitch" in str(villa_value).lower():
-        villa_value = str(villa_value).replace("ROOF PITCH","")
-
-    norm_villa = normalize_value(villa_value)
-    norm_factory = normalize_value(factory_value)
-
-    return (norm_villa == norm_factory or
-            norm_villa in norm_factory or
-            norm_factory in norm_villa or
-            fuzzy_match(norm_villa, norm_factory))
-
-def extract_pdf_text_pdfplumber(file):
+def extract_pdf_text_pdfplumber(file) -> str:
+    """Extract text from PDF using pdfplumber with enhanced formatting."""
     try:
         with pdfplumber.open(file) as pdf:
-            text = ""
+            pages_text = []
             for page in pdf.pages:
-                text += page.extract_text()
-            return text
+                # Extract text with better handling of tables and layouts
+                text = page.extract_text(x_tolerance=3, y_tolerance=3)
+                # Extract tables and format them properly
+                tables = page.extract_tables()
+                formatted_tables = []
+                for table in tables:
+                    formatted_table = '\n'.join(['\t'.join([str(cell) if cell else '' for cell in row]) for row in table])
+                    formatted_tables.append(formatted_table)
+                
+                # Combine regular text and tables
+                page_text = text + '\n' + '\n'.join(formatted_tables)
+                pages_text.append(page_text)
+            
+            return '\n\n'.join(pages_text)
     except Exception as e:
-        st.error(f"Error in PDF extraction: {str(e)}")
+        st.error(f"Error in pdfplumber extraction: {str(e)}")
         return ""
 
-def extract_variables_from_villa_text(text, variables):
-    extracted = {}
-    for variable in variables:
-        var, var_name = variable['var'], variable['var_name']
-        start = text.find(var) + len(var)
-        if start > len(var):  # Only if var was found
-            end = text.find("\n", start)
-            extracted[var_name] = text[start:end].strip()
-    return extracted
-
-def extract_variables_from_factory_text(text):
-    extracted = {}
-    lines = text.splitlines()
-    
-    for i, line in enumerate(lines):
-        parts = line.split(maxsplit=4)
-        
-        # Handle various text patterns
-        if "OP001542 Model No.:" in line:
-            extracted["Model No.:"] = parts[3].strip()
-        elif len(parts) >= 2 and parts[0].startswith("OP"):
-            extracted[parts[0]] = " ".join(parts[1:]).strip()
-        elif len(parts) >= 3 and parts[1].startswith("OP"):
-            extracted[parts[1]] = " ".join(parts[2:]).strip()
-        elif ":" in line:
-            key, value = map(str.strip, line.split(":", 1))
-            extracted[key] = value
-            
-        # Handle special cases
-        special_codes = ["OP000110", "OP000446", "OP000112", "OP001619"]
-        for code in special_codes:
-            if code in line and extracted.get(code) is None:
-                target_idx = i + (15 if code != "OP000446" else 14)
-                if target_idx < len(lines):
-                    extracted[code] = lines[target_idx].strip()
-                    
-    return extracted
-
-def process_comparison_result(quote1_data, quote2_data):
-    results = []
-    
-    # Standard field comparison
-    for var in variables:
-        var_name = var['var_name']
-        if var_name in quote1_data and var_name in quote2_data:
-            value1, value2 = quote1_data[var_name], quote2_data[var_name]
-            is_match = robust_match(value1, value2)
-            results.append({
-                "Line Item": var_name,
-                "Quote 1 Description": value1,
-                "Quote 2 Description": value2,
-                "Match Status": "✓" if is_match else "❌"
-            })
-    
-    # Factory code matching
-    for match in matching_table:
-        villa_var, factory_code = match['villa_var'], match['factory_code']
-        var_name = next((v['var_name'] for v in variables if v['var'] == villa_var), villa_var)
-        
-        quote1_value = quote1_data.get(var_name, "Not Found")
-        quote2_value = quote2_data.get(factory_code, "Not Found")
-        
-        if quote1_value != "Not Found" or quote2_value != "Not Found":
-            if not any(r["Line Item"] == var_name for r in results):
-                results.append({
-                    "Line Item": var_name,
-                    "Quote 1 Description": quote1_value,
-                    "Quote 2 Description": quote2_value,
-                    "Match Status": "✓" if robust_match(quote1_value, quote2_value) else "❌"
-                })
-    
-    return results
-
-def read_file(file):
+def extract_pdf_text_pymupdf(file) -> str:
+    """Extract text from PDF using PyMuPDF for better formatting."""
     try:
-        text = extract_pdf_text_pdfplumber(file)
-        return {
-            'text': text,
-            'tables': [],  # Add table extraction if needed
-            'raw_text': text
-        }
+        file_bytes = file.getvalue()
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        
+        pages_text = []
+        for page in doc:
+            blocks = page.get_text("dict")["blocks"]
+            page_text = []
+            
+            for block in blocks:
+                if block["type"] == 0:  # Text block
+                    for line in block["lines"]:
+                        line_text = ""
+                        for span in line["spans"]:
+                            line_text += span["text"]
+                        page_text.append(line_text)
+                elif block["type"] == 1:  # Image block
+                    page_text.append("[Image]")
+            
+            pages_text.append("\n".join(page_text))
+        
+        doc.close()
+        return "\n\n".join(pages_text)
     except Exception as e:
-        st.error(f"Error reading file: {str(e)}")
-        return {'text': '', 'tables': [], 'raw_text': ''}
+        st.error(f"Error in PyMuPDF extraction: {str(e)}")
+        return ""
 
-# File upload UI
+def clean_text(text: str) -> str:
+    """Clean and normalize extracted text."""
+    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r'[^\w\s.,;:$%()-]', '', text)
+    text = text.replace('\r', '\n')
+    text = '\n'.join(line.strip() for line in text.split('\n') if line.strip())
+    return text
+
+def extract_tables_from_text(text: str) -> List[List[str]]:
+    """Attempt to identify and extract tabular data from text."""
+    tables = []
+    current_table = []
+    
+    lines = text.split('\n')
+    for line in lines:
+        if '\t' in line or '  ' in line:
+            cells = re.split(r'\t|  +', line.strip())
+            current_table.append(cells)
+        elif current_table:
+            if len(current_table) > 1:
+                tables.append(current_table)
+            current_table = []
+    
+    if current_table and len(current_table) > 1:
+        tables.append(current_table)
+    
+    return tables
+
+def read_file(file) -> Dict[str, str]:
+    """Enhanced file reading with better PDF handling and text preprocessing."""
+    try:
+        if file.type == "application/pdf":
+            text_pdfplumber = extract_pdf_text_pdfplumber(file)
+            text_pymupdf = extract_pdf_text_pymupdf(file)
+            
+            text = text_pdfplumber if len(text_pdfplumber) > len(text_pymupdf) else text_pymupdf
+            tables = extract_tables_from_text(text)
+            formatted_tables = ['\n'.join(['\t'.join(row) for row in table]) for table in tables]
+            final_text = text + '\n\n' + '\n\n'.join(formatted_tables)
+            final_text = clean_text(final_text)
+            
+            return {
+                'text': final_text,
+                'tables': tables,
+                'raw_text': text
+            }
+            
+        elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            doc = docx.Document(file)
+            text = '\n'.join(paragraph.text for paragraph in doc.paragraphs)
+            tables = [[cell.text for cell in row.cells] for table in doc.tables for row in table.rows]
+            return {
+                'text': clean_text(text),
+                'tables': tables,
+                'raw_text': text
+            }
+        else:  # txt files
+            text = file.getvalue().decode('utf-8')
+            return {
+                'text': clean_text(text),
+                'tables': extract_tables_from_text(text),
+                'raw_text': text
+            }
+    except Exception as e:
+        st.error(f"Error reading file {file.name}: {str(e)}")
+        return {'text': '', 'tables': [], 'raw_text': ''}
+        # Create two columns for file uploads
 col1, col2 = st.columns(2)
 
+# Modified file upload handling
 with col1:
     st.subheader("Quote 1")
-    quote1_file = st.file_uploader("Upload first quote", type=['pdf'], key="quote1_uploader")
+    quote1_file = st.file_uploader(
+        "Upload first quote",
+        type=['pdf', 'docx', 'txt'],
+        key="quote1_uploader"
+    )
     if quote1_file:
         extracted_data = read_file(quote1_file)
         st.session_state.quote1 = {
             'name': quote1_file.name,
             'content': extracted_data['text'],
+            'tables': extracted_data['tables'],
             'raw_content': extracted_data['raw_text']
         }
         st.success(f"Quote 1 uploaded: {quote1_file.name}")
+        
+        # Show preview with tabs for different views
+        preview_tab1, preview_tab2 = st.tabs(["Processed Text", "Raw Text"])
+        with preview_tab1:
+            st.text(extracted_data['text'][:1000] + "...")
+        with preview_tab2:
+            st.text(extracted_data['raw_text'][:1000] + "...")
+            
+        # Show detected tables
+        if extracted_data['tables']:
+            with st.expander("View Detected Tables"):
+                for i, table in enumerate(extracted_data['tables']):
+                    st.markdown(f"**Table {i+1}**")
+                    st.dataframe(pd.DataFrame(table))
 
 with col2:
     st.subheader("Quote 2")
-    quote2_file = st.file_uploader("Upload second quote", type=['pdf'], key="quote2_uploader")
+    quote2_file = st.file_uploader(
+        "Upload second quote",
+        type=['pdf', 'docx', 'txt'],
+        key="quote2_uploader"
+    )
     if quote2_file:
         extracted_data = read_file(quote2_file)
         st.session_state.quote2 = {
             'name': quote2_file.name,
             'content': extracted_data['text'],
+            'tables': extracted_data['tables'],
             'raw_content': extracted_data['raw_text']
         }
         st.success(f"Quote 2 uploaded: {quote2_file.name}")
+        
+        # Show preview with tabs for different views
+        preview_tab1, preview_tab2 = st.tabs(["Processed Text", "Raw Text"])
+        with preview_tab1:
+            st.text(extracted_data['text'][:1000] + "...")
+        with preview_tab2:
+            st.text(extracted_data['raw_text'][:1000] + "...")
+            
+        # Show detected tables
+        if extracted_data['tables']:
+            with st.expander("View Detected Tables"):
+                for i, table in enumerate(extracted_data['tables']):
+                    st.markdown(f"**Table {i+1}**")
+                    st.dataframe(pd.DataFrame(table))
 
 # Compare button
 if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.quote2:
+    # Create a progress bar
     progress_bar = st.progress(0)
     status_text = st.empty()
     
     try:
-        status_text.text("Processing documents...")
+        # Stage 1: Document Processing
+        status_text.text("Stage 1/4: Processing documents...")
         progress_bar.progress(25)
         
-        quote1_data = extract_variables_from_villa_text(st.session_state.quote1['content'], variables)
-        quote2_data = extract_variables_from_factory_text(st.session_state.quote2['content'])
+        comparison_prompt = f"""
+        Compare these two quotes and create a clear markdown table showing ONLY:
+        | Line Item | Quote 1 Description | Quote 2 Description | Match Status |
+
+        Quote 1: {st.session_state.quote1['content']}
+        Quote 2: {st.session_state.quote2['content']}
+
+        Use these match indicators:
+        ✓ = Exact match
+        ~ = Partial match
+        [1] = Only in Quote 1
+        [2] = Only in Quote 2
+
+        After the table, list:
+        1. Total number of items
+        2. Number of exact matches
+        3. Number of partial matches
+        4. Items unique to each quote
+        """
         
-        status_text.text("Comparing documents...")
+        # Stage 2: Sending to Claude
+        status_text.text("Stage 2/4: Analyzing with Claude...")
         progress_bar.progress(50)
         
-        results = process_comparison_result(quote1_data, quote2_data)
-        
-        status_text.text("Generating report...")
-        progress_bar.progress(75)
-        
-        total_items = len(results)
-        exact_matches = sum(1 for r in results if r["Match Status"] == "✓")
-        
-        st.markdown("### Comparison Results")
-        st.dataframe(pd.DataFrame(results))
-        
-        st.markdown(f"""
-        **Summary:**
-        - Total Items: {total_items}
-        - Exact Matches: {exact_matches}
-        - Match Rate: {(exact_matches/total_items*100):.1f}%
-        """)
-        
-        df = pd.DataFrame(results)
-        csv = df.to_csv(index=False)
-        st.download_button(
-            "Download Results",
-            csv,
-            "comparison_results.csv",
-            "text/csv",
-            key='download-csv'
+        response = st.session_state.anthropic_client.messages.create(
+            model="claude-3-opus-20240229",
+            max_tokens=4096,
+            messages=[{
+                "role": "user",
+                "content": comparison_prompt
+            }]
         )
         
+        # Stage 3: Processing Results
+        status_text.text("Stage 3/4: Processing results...")
+        progress_bar.progress(75)
+        
+        # Stage 4: Displaying Results
+        status_text.text("Stage 4/4: Generating comparison table...")
+        progress_bar.progress(90)
+        
+        # Display final results
+        st.markdown("### Line Item Comparison")
+        st.markdown(response.content[0].text)
+        
+        # Add download button
+        st.download_button(
+            "Download Comparison",
+            response.content[0].text,
+            "comparison.csv",
+            "text/csv"
+        )
+        
+        # Complete the progress bar
         progress_bar.progress(100)
         status_text.text("Analysis complete! ✅")
         
+        # Add timestamp
+        st.markdown(f"*Analysis completed at {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+
     except Exception as e:
         progress_bar.empty()
         status_text.empty()
@@ -320,9 +300,12 @@ st.markdown("---")
 st.markdown("""
     **Legend:**
     - ✓ : Exact match
-    - ❌ : No match
+    - ~ : Partial match
+    - [1] : Only in Quote 1
+    - [2] : Only in Quote 2
 """)
 
+# Add a clear button at the bottom
 if st.button("Clear and Start Over"):
     st.session_state.quote1 = None
     st.session_state.quote2 = None
