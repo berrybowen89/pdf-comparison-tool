@@ -1,11 +1,14 @@
 import streamlit as st
 from anthropic import Anthropic
+import pypdf
+import docx
+import io
 
 # Streamlit page config
-st.set_page_config(page_title="Claude Chat", page_icon="🤖")
+st.set_page_config(page_title="Claude Document Processor", page_icon="📄")
 
 # Initialize Streamlit page
-st.title("Claude 3 Chat Interface")
+st.title("Claude Document Processor")
 
 # Secure API key handling
 try:
@@ -16,43 +19,71 @@ except Exception as e:
     st.error("Please configure your API key in Streamlit secrets")
     st.stop()
 
-# Initialize chat history
-if 'messages' not in st.session_state:
-    st.session_state.messages = []
+def read_pdf(file):
+    pdf_reader = pypdf.PdfReader(file)
+    text = ""
+    for page in pdf_reader.pages:
+        text += page.extract_text() + "\n"
+    return text
 
-# Display chat history
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.write(message["content"])
+def read_docx(file):
+    doc = docx.Document(file)
+    text = ""
+    for paragraph in doc.paragraphs:
+        text += paragraph.text + "\n"
+    return text
 
-# Chat input
-if prompt := st.chat_input("What would you like to ask Claude?"):
-    # Display user message
-    with st.chat_message("user"):
-        st.write(prompt)
-    
-    # Add user message to history
-    st.session_state.messages.append({"role": "user", "content": prompt})
+def read_txt(file):
+    return file.getvalue().decode('utf-8')
 
+# File uploader
+uploaded_file = st.file_uploader("Upload a document (PDF, DOCX, or TXT)", type=['pdf', 'docx', 'txt'])
+
+if uploaded_file:
+    # Extract text based on file type
     try:
-        # Get Claude's response
-        with st.chat_message("assistant"):
-            with st.spinner("Claude is thinking..."):
-                response = st.session_state.anthropic_client.messages.create(
-                    model="claude-3-opus-20240229",
-                    max_tokens=1000,
-                    messages=st.session_state.messages
-                )
-                st.write(response.content[0].text)
-                
-                # Add assistant response to history
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": response.content[0].text}
-                )
+        if uploaded_file.type == "application/pdf":
+            text = read_pdf(uploaded_file)
+        elif uploaded_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            text = read_docx(uploaded_file)
+        else:  # txt files
+            text = read_txt(uploaded_file)
+        
+        st.success("Document uploaded successfully!")
+        
+        # User question about the document
+        user_question = st.text_input(
+            "What would you like to know about this document?",
+            placeholder="e.g., 'Summarize this document' or 'What are the main points?'"
+        )
+        
+        if user_question:
+            with st.spinner("Processing..."):
+                try:
+                    # Create message with document content and question
+                    response = st.session_state.anthropic_client.messages.create(
+                        model="claude-3-opus-20240229",
+                        max_tokens=1000,
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": f"Here's a document to analyze:\n\n{text}\n\nQuestion: {user_question}"
+                            }
+                        ]
+                    )
+                    
+                    # Display response
+                    st.write("### Claude's Response:")
+                    st.write(response.content[0].text)
+                    
+                except Exception as e:
+                    st.error(f"Error processing request: {str(e)}")
+    
     except Exception as e:
-        st.error(f"Error: {str(e)}")
+        st.error(f"Error reading file: {str(e)}")
 
-# Add a clear chat button
-if st.button("Clear Chat"):
-    st.session_state.messages = []
-    st.rerun()
+# Add requirements to requirements.txt:
+# streamlit
+# anthropic
+# pypdf
+# python-docx
