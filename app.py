@@ -7,43 +7,47 @@ from io import BytesIO
 import re
 
 def extract_structured_data(text):
-    """Extract data specifically from Feature, Option, Variant, Description, Quantity, Price columns"""
+    """Extract data with proper column separation"""
     lines = text.split('\n')
     structured_data = []
     current_section = None
     
     for line in lines:
-        # Skip empty lines and page headers
-        if not line.strip() or "Champion is a registered trademark" in line:
+        # Skip empty lines and headers/footers
+        if (not line.strip() or 
+            "Champion is a registered trademark" in line or
+            "Buyer:" in line or 
+            "Date:" in line or 
+            "Seller:" in line or
+            "Page" in line or 
+            line.strip().isdigit()):
             continue
             
-        # Check if line contains option code
-        option_match = re.search(r'(OP\d{6})', line)
-        
         # Check for section headers
         if any(section in line for section in [
             'Construction', 'Exterior', 'Windows', 'Electrical', 'Cabinets', 
             'Kitchen', 'Appliances', 'Interior', 'Plumbing/Heating', 'Primary Bath',
-            'Hall Bath', 'Utility Room', 'Floor Covering'
+            'Hall Bath', 'Utility Room', 'Floor Covering', 'Countertop'
         ]):
             current_section = line.strip()
             continue
             
-        # Skip header rows and footers
-        if "Feature" in line and "Option" in line:
-            continue
-        if "Buyer:" in line or "Date:" in line or "Seller:" in line:
-            continue
-        if "Page" in line or line.strip().isdigit():
+        # Skip the column headers row
+        if "Feature" in line and "Option" in line and "Description" in line:
             continue
             
-        # Split line by multiple spaces while preserving single spaces within phrases
-        parts = [p.strip() for p in re.split(r'\s{2,}', line.strip()) if p.strip()]
+        # Use regex to match the specific pattern of the line
+        # Looking for: FEATURE OP000000 [Variant] Description Quantity Price
+        feature_match = re.match(r'^([A-Z][A-Z0-9/\s]+(?:\s*&\s*[A-Z]+)*)', line.strip())
+        option_match = re.search(r'(OP\d{6})', line)
         
-        if parts:  # Only process non-empty lines
+        if feature_match:
+            feature = feature_match.group(1).strip()
+            
+            # Initialize data dictionary
             data = {
                 'Section': current_section or 'Miscellaneous',
-                'Feature': parts[0] if parts else '',
+                'Feature': feature,
                 'Option': '',
                 'Variant': '',
                 'Description': '',
@@ -54,31 +58,41 @@ def extract_structured_data(text):
             # Extract option code
             if option_match:
                 data['Option'] = option_match.group(1)
-                
-            # Look for quantity patterns
-            qty_match = re.search(r'(\d+\s*(?:EA|LF|SF))', line)
+                line = line.replace(data['Option'], '')  # Remove option code from line
+            
+            # Extract quantity
+            qty_match = re.search(r'(\d+\s*(?:EA|LF|SF|D\$))', line)
             if qty_match:
-                data['Quantity'] = qty_match.group(1)
-                
-            # Look for price patterns
-            price_match = re.search(r'(Standard|\d+\.\d{2})', line)
+                data['Quantity'] = qty_match.group(1).strip()
+                line = line.replace(qty_match.group(1), '')
+            
+            # Extract price
+            price_match = re.search(r'(Standard|\d+\.\d{2}|-?\d+,\d+\.\d{2})', line)
             if price_match:
-                data['Price'] = price_match.group(1)
-                
-            # Look for variants
+                data['Price'] = price_match.group(1).strip()
+                line = line.replace(price_match.group(1), '')
+            
+            # Extract variant
             variants = ['Nickel', 'White', 'Brown', 'Matte', 'Expresso', 
                        'Toasted Almond', 'Linen Ruffle', 'Dual Black', 'Flint Rock']
             for variant in variants:
                 if variant in line:
                     data['Variant'] = variant
+                    line = line.replace(variant, '')
                     break
-                    
-            # Extract description
-            desc_parts = []
-            for part in parts[1:]:  # Skip feature name
-                if part != data['Option'] and part != data['Variant'] and part != data['Quantity'] and part != data['Price']:
-                    desc_parts.append(part)
-            data['Description'] = ' '.join(desc_parts).strip()
+            
+            # Clean up the line by removing feature and other extracted parts
+            line = line.replace(feature, '')
+            
+            # Whatever remains is the description
+            description = ' '.join(line.split())
+            # Clean up any remaining multiple spaces or special characters
+            description = re.sub(r'\s+', ' ', description).strip()
+            # Remove any leading/trailing special characters
+            description = re.sub(r'^[^a-zA-Z0-9]*|[^a-zA-Z0-9]*$', '', description)
+            
+            if description and not description.isspace():
+                data['Description'] = description
             
             # Only add if we have meaningful data
             if data['Feature'] and (data['Option'] or data['Description']):
@@ -94,7 +108,10 @@ def compare_pdfs(factory_text):
     df = pd.DataFrame(factory_data)
     
     # Clean up the data
-    df = df.fillna('')  # Replace NaN with empty string
+    df = df.fillna('')
+    
+    # Remove any rows where Feature is just whitespace or empty
+    df = df[df['Feature'].str.strip() != '']
     
     return df
 
@@ -156,6 +173,10 @@ if factory_file:
             st.subheader("Sections Found")
             st.write(", ".join(sorted(results_df['Section'].unique())))
             
+            # Debug view
+            with st.expander("Show Raw Text (Debug)"):
+                st.text(factory_text)
+            
         except Exception as e:
             st.error(f"An error occurred: {str(e)}")
             st.error("Error details:", exc_info=True)
@@ -165,4 +186,4 @@ else:
 
 # Add footer
 st.markdown("---")
-st.markdown("v2.1 - Specification Extraction Tool")
+st.markdown("v2.2 - Specification Extraction Tool")
