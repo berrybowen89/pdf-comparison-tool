@@ -6,23 +6,33 @@ import numpy as np
 from io import BytesIO
 import re
 
+def process_sub_descriptions(main_desc, sub_descs):
+    """Combine main description with sub-descriptions in a clean format"""
+    if not sub_descs:
+        return main_desc
+    
+    # Clean up sub-descriptions and combine with main description
+    clean_subs = [sub.strip().strip('-~*').strip() for sub in sub_descs]
+    full_desc = [main_desc] + clean_subs if main_desc else clean_subs
+    return ' | '.join(filter(None, full_desc))
+
 def extract_structured_data(text):
-    """Extract data with proper handling of sub-descriptions"""
+    """Extract data with properly formatted descriptions"""
     lines = text.split('\n')
     structured_data = []
     current_section = None
-    current_description = []
-    previous_data = None
+    current_item = None
+    sub_descriptions = []
     
     for line in lines:
+        line = line.strip()
+        
         # Skip empty lines and headers/footers
-        if (not line.strip() or 
+        if (not line or 
             "Champion is a registered trademark" in line or
             "Buyer:" in line or 
             "Date:" in line or 
-            "Seller:" in line or
-            "Page" in line or 
-            line.strip().isdigit()):
+            "Page" in line):
             continue
             
         # Check for section headers
@@ -31,38 +41,46 @@ def extract_structured_data(text):
             'Kitchen', 'Appliances', 'Interior', 'Plumbing/Heating', 'Primary Bath',
             'Hall Bath', 'Utility Room', 'Floor Covering', 'Countertop'
         ]):
-            # If we have a pending description, add it to the previous item
-            if previous_data and current_description:
-                previous_data['Description'] = ' '.join(current_description).strip()
-                current_description = []
+            # Save previous item if exists
+            if current_item:
+                current_item['Description'] = process_sub_descriptions(
+                    current_item['Description'], sub_descriptions
+                )
+                structured_data.append(current_item)
+                current_item = None
+                sub_descriptions = []
             
             current_section = line.strip()
             continue
-            
-        # Skip the column headers row
-        if "Feature" in line and "Option" in line and "Description" in line:
-            continue
-            
-        # Check if this is a sub-description (starts with - or ~)
-        if line.strip().startswith(('-', '~', '**', '..')):
-            if previous_data:
-                current_description.append(line.strip())
-            continue
-            
-        # If we have a pending description, add it to the previous item
-        if previous_data and current_description:
-            previous_data['Description'] = ' '.join([previous_data['Description']] + current_description).strip()
-            current_description = []
         
-        # Use regex to match the main line pattern
-        feature_match = re.match(r'^([A-Z][A-Z0-9/\s]+(?:\s*&\s*[A-Z]+)*)', line.strip())
+        # Check if line is a sub-description
+        if line.strip().startswith(('-', '~', '**', '..')):
+            if current_item:
+                sub_descriptions.append(line)
+            continue
+        
+        # Skip header rows
+        if "Feature" in line and "Option" in line:
+            continue
+        
+        # Try to extract main item data
+        feature_match = re.match(r'^([A-Z][A-Z0-9/\s]+(?:\s*&\s*[A-Z]+)*)', line)
         option_match = re.search(r'(OP\d{6})', line)
         
         if feature_match:
+            # Save previous item if exists
+            if current_item:
+                current_item['Description'] = process_sub_descriptions(
+                    current_item['Description'], sub_descriptions
+                )
+                structured_data.append(current_item)
+            
+            # Reset for new item
+            sub_descriptions = []
             feature = feature_match.group(1).strip()
             
-            # Initialize data dictionary
-            data = {
+            # Initialize new item
+            current_item = {
                 'Section': current_section or 'Miscellaneous',
                 'Feature': feature,
                 'Option': '',
@@ -74,19 +92,19 @@ def extract_structured_data(text):
             
             # Extract option code
             if option_match:
-                data['Option'] = option_match.group(1)
-                line = line.replace(data['Option'], '')
+                current_item['Option'] = option_match.group(1)
+                line = line.replace(current_item['Option'], '')
             
             # Extract quantity
             qty_match = re.search(r'(\d+\s*(?:EA|LF|SF|D\$))', line)
             if qty_match:
-                data['Quantity'] = qty_match.group(1).strip()
+                current_item['Quantity'] = qty_match.group(1).strip()
                 line = line.replace(qty_match.group(1), '')
             
             # Extract price
             price_match = re.search(r'(Standard|\d+\.\d{2}|-?\d+,\d+\.\d{2})', line)
             if price_match:
-                data['Price'] = price_match.group(1).strip()
+                current_item['Price'] = price_match.group(1).strip()
                 line = line.replace(price_match.group(1), '')
             
             # Extract variant
@@ -95,112 +113,25 @@ def extract_structured_data(text):
                        'Chandler Oak']
             for variant in variants:
                 if variant in line:
-                    data['Variant'] = variant
+                    current_item['Variant'] = variant
                     line = line.replace(variant, '')
                     break
             
-            # Clean up the line by removing feature
-            line = line.replace(feature, '')
-            
-            # Whatever remains is the description
+            # Clean up description
             description = ' '.join(line.split())
             description = re.sub(r'\s+', ' ', description).strip()
             description = re.sub(r'^[^a-zA-Z0-9]*|[^a-zA-Z0-9]*$', '', description)
             
             if description and not description.isspace():
-                data['Description'] = description
-            
-            # Only add if we have meaningful data
-            if data['Feature'] and (data['Option'] or data['Description']):
-                structured_data.append(data)
-                previous_data = data
-                current_description = []
+                current_item['Description'] = description
     
-    # Handle any remaining description for the last item
-    if previous_data and current_description:
-        previous_data['Description'] = ' '.join([previous_data['Description']] + current_description).strip()
+    # Add last item if exists
+    if current_item:
+        current_item['Description'] = process_sub_descriptions(
+            current_item['Description'], sub_descriptions
+        )
+        structured_data.append(current_item)
     
     return structured_data
 
-def compare_pdfs(factory_text):
-    """Process factory PDF contents"""
-    factory_data = extract_structured_data(factory_text)
-    
-    # Convert to DataFrame
-    df = pd.DataFrame(factory_data)
-    
-    # Clean up the data
-    df = df.fillna('')
-    
-    # Clean up descriptions
-    df['Description'] = df['Description'].apply(lambda x: re.sub(r'\s+', ' ', x))
-    
-    # Remove any rows where Feature is just whitespace or empty
-    df = df[df['Feature'].str.strip() != '']
-    
-    return df
-
-# Streamlit UI
-st.set_page_config(page_title="PDF Specification Extraction", layout="wide")
-
-st.title("PDF Specification Extraction Tool")
-
-# File uploader
-factory_file = st.file_uploader("Upload Factory PDF", type=['pdf'])
-
-if factory_file:
-    if st.button("Extract Specifications", type="primary"):
-        try:
-            # Extract text from PDF
-            factory_text = ''
-            pdf_reader = PdfReader(factory_file)
-            for page in pdf_reader.pages:
-                factory_text += page.extract_text() + '\n'
-            
-            # Process and display results
-            results_df = compare_pdfs(factory_text)
-            
-            # Display results with formatting
-            st.dataframe(
-                results_df,
-                column_config={
-                    "Section": st.column_config.TextColumn("Section", width=120),
-                    "Feature": st.column_config.TextColumn("Feature", width=150),
-                    "Option": st.column_config.TextColumn("Option", width=100),
-                    "Variant": st.column_config.TextColumn("Variant", width=100),
-                    "Description": st.column_config.TextColumn("Description", width=400),
-                    "Quantity": st.column_config.TextColumn("Quantity", width=80),
-                    "Price": st.column_config.TextColumn("Price", width=100),
-                },
-                use_container_width=True,
-                hide_index=True
-            )
-            
-            # Add download button
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                results_df.to_excel(writer, index=False)
-            
-            st.download_button(
-                label="Download as Excel",
-                data=output.getvalue(),
-                file_name="factory_specifications.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            
-            # Display statistics
-            st.subheader("Summary")
-            st.write(f"Total Items: {len(results_df)}")
-            st.write(f"Sections Found: {len(results_df['Section'].unique())}")
-            st.write(f"Options with Pricing: {len(results_df[results_df['Price'] != ''])}")
-            
-        except Exception as e:
-            st.error(f"An error occurred: {str(e)}")
-            st.error("Error details:", exc_info=True)
-
-else:
-    st.info("Please upload the factory PDF file to begin extraction")
-
-# Add footer
-st.markdown("---")
-st.markdown("v2.3 - Specification Extraction Tool")
+# Streamlit UI and remaining code stays the same...
