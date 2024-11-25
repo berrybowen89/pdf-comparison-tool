@@ -1,28 +1,65 @@
-import streamlit as st
-import pandas as pd
-from PyPDF2 import PdfReader
-from rapidfuzz import fuzz
-import numpy as np
-from io import BytesIO
-import re
-
-def process_sub_descriptions(main_desc, sub_descs):
-    """Combine main description with sub-descriptions in a clean format"""
-    if not sub_descs:
-        return main_desc
-    
-    # Clean up sub-descriptions and combine with main description
-    clean_subs = [sub.strip().strip('-~*').strip() for sub in sub_descs]
-    full_desc = [main_desc] + clean_subs if main_desc else clean_subs
-    return ' | '.join(filter(None, full_desc))
-
 def extract_structured_data(text):
-    """Extract data with properly formatted descriptions"""
+    """Extract data with proper column structure based on factory spec format"""
     lines = text.split('\n')
     structured_data = []
     current_section = None
     current_item = None
     sub_descriptions = []
+    
+    def parse_line(line):
+        """Parse a line into its component parts based on spec format"""
+        parts = {
+            'Feature': '',
+            'Option': '',
+            'Variant': '',
+            'Description': '',
+            'Quantity': '',
+            'Price': ''
+        }
+        
+        # Remove multiple spaces and split line
+        line = ' '.join(line.split())
+        
+        # Extract Option Code (always starts with OP followed by 6 digits)
+        option_match = re.search(r'(OP\d{6})', line)
+        if option_match:
+            parts['Option'] = option_match.group(1)
+            line = line.replace(parts['Option'], '').strip()
+        
+        # Extract Feature (always at start of line, all caps)
+        feature_match = re.match(r'^([A-Z][A-Z0-9/\s&]+?)(?=\s|$)', line)
+        if feature_match:
+            parts['Feature'] = feature_match.group(1).strip()
+            line = line[len(parts['Feature']):].strip()
+        
+        # Extract Quantity (formats like "1 EA", "143 LF", "1,316 SF")
+        qty_match = re.search(r'(\d+(?:,\d{3})*\s*(?:EA|LF|SF|D\$))', line)
+        if qty_match:
+            parts['Quantity'] = qty_match.group(1)
+            line = line.replace(parts['Quantity'], '').strip()
+        
+        # Extract Price (either "Standard" or numeric value)
+        price_match = re.search(r'(Standard|-?\d+(?:,\d{3})*\.\d{2})', line)
+        if price_match:
+            parts['Price'] = price_match.group(1)
+            line = line.replace(parts['Price'], '').strip()
+        
+        # Extract Variant (specific material/color options)
+        variants = [
+            'Nickel', 'White', 'Brown', 'Matte', 'Expresso', 
+            'Toasted Almond', 'Linen Ruffle', 'Dual Black', 'Flint Rock',
+            'Chandler Oak'
+        ]
+        for variant in variants:
+            if variant in line:
+                parts['Variant'] = variant
+                line = line.replace(variant, '').strip()
+                break
+        
+        # Remaining text is Description
+        parts['Description'] = line.strip()
+        
+        return parts
     
     for line in lines:
         line = line.strip()
@@ -32,257 +69,112 @@ def extract_structured_data(text):
             "Champion is a registered trademark" in line or
             "Buyer:" in line or 
             "Date:" in line or 
-            "Page" in line):
+            "Page" in line or
+            "Feature Option Variant Description" in line):
             continue
-            
-        # Check for section headers
+        
+        # Identify section headers
         if any(section in line for section in [
             'Construction', 'Exterior', 'Windows', 'Electrical', 'Cabinets', 
             'Kitchen', 'Appliances', 'Interior', 'Plumbing/Heating', 'Primary Bath',
             'Hall Bath', 'Utility Room', 'Floor Covering', 'Countertop'
         ]):
-            # Save previous item if exists
-            if current_item:
-                current_item['Description'] = process_sub_descriptions(
-                    current_item['Description'], sub_descriptions
-                )
-                structured_data.append(current_item)
-                current_item = None
+            if current_item and sub_descriptions:
+                current_item['Description'] = ' | '.join([current_item['Description']] + sub_descriptions)
+            current_section = line.strip()
+            sub_descriptions = []
+            continue
+        
+        # Handle sub-descriptions (lines starting with -, ~, etc.)
+        if line.strip().startswith(('-', '~', '**', '..')):
+            sub_text = line.strip().strip('-~*').strip()
+            sub_descriptions.append(sub_text)
+            continue
+        
+        # Skip if line doesn't have enough content
+        if len(line.split()) < 2:
+            continue
+        
+        # Parse main content line
+        parsed = parse_line(line)
+        
+        # Only process if we have either a Feature or Option code
+        if parsed['Feature'] or parsed['Option']:
+            if current_item and sub_descriptions:
+                current_item['Description'] = ' | '.join([current_item['Description']] + sub_descriptions)
                 sub_descriptions = []
             
-            current_section = line.strip()
-            continue
-        
-        # Check if line is a sub-description
-        if line.strip().startswith(('-', '~', '**', '..')):
-            if current_item:
-                sub_descriptions.append(line)
-            continue
-        
-        # Skip header rows
-        if "Feature" in line and "Option" in line:
-            continue
-        
-        # Try to extract main item data
-        feature_match = re.match(r'^([A-Z][A-Z0-9/\s]+(?:\s*&\s*[A-Z]+)*)', line)
-        option_match = re.search(r'(OP\d{6})', line)
-        
-        if feature_match:
-            # Save previous item if exists
-            if current_item:
-                current_item['Description'] = process_sub_descriptions(
-                    current_item['Description'], sub_descriptions
-                )
-                structured_data.append(current_item)
-            
-            # Reset for new item
-            sub_descriptions = []
-            feature = feature_match.group(1).strip()
-            
-            # Initialize new item
             current_item = {
                 'Section': current_section or 'Miscellaneous',
-                'Feature': feature,
-                'Option': '',
-                'Variant': '',
-                'Description': '',
-                'Quantity': '',
-                'Price': ''
+                **parsed
             }
             
-            # Extract option code
-            if option_match:
-                current_item['Option'] = option_match.group(1)
-                line = line.replace(current_item['Option'], '')
+            # Format quantity if present
+            if current_item['Quantity']:
+                current_item['Quantity'] = current_item['Quantity'].strip()
             
-            # Extract quantity
-            qty_match = re.search(r'(\d+\s*(?:EA|LF|SF|D\$))', line)
-            if qty_match:
-                current_item['Quantity'] = qty_match.group(1).strip()
-                line = line.replace(qty_match.group(1), '')
+            # Format price if present
+            if current_item['Price']:
+                # Convert numeric prices to standard format
+                if current_item['Price'] != 'Standard':
+                    try:
+                        price = float(current_item['Price'].replace(',', ''))
+                        current_item['Price'] = f"{price:,.2f}"
+                    except ValueError:
+                        pass
             
-            # Extract price
-            price_match = re.search(r'(Standard|\d+\.\d{2}|-?\d+,\d+\.\d{2})', line)
-            if price_match:
-                current_item['Price'] = price_match.group(1).strip()
-                line = line.replace(price_match.group(1), '')
-            
-            # Extract variant
-            variants = ['Nickel', 'White', 'Brown', 'Matte', 'Expresso', 
-                       'Toasted Almond', 'Linen Ruffle', 'Dual Black', 'Flint Rock',
-                       'Chandler Oak']
-            for variant in variants:
-                if variant in line:
-                    current_item['Variant'] = variant
-                    line = line.replace(variant, '')
-                    break
-            
-            # Clean up description
-            description = ' '.join(line.split())
-            description = re.sub(r'\s+', ' ', description).strip()
-            description = re.sub(r'^[^a-zA-Z0-9]*|[^a-zA-Z0-9]*$', '', description)
-            
-            if description and not description.isspace():
-                current_item['Description'] = description
+            structured_data.append(current_item)
     
-    # Add last item if exists
-    if current_item:
-        current_item['Description'] = process_sub_descriptions(
-            current_item['Description'], sub_descriptions
-        )
-        structured_data.append(current_item)
+    # Handle any remaining sub-descriptions for last item
+    if current_item and sub_descriptions:
+        current_item['Description'] = ' | '.join([current_item['Description']] + sub_descriptions)
     
     return structured_data
 
-def process_pdf(pdf_file):
-    """Process uploaded PDF file"""
-    try:
-        # Extract text from PDF
-        pdf_reader = PdfReader(pdf_file)
-        text = ''
-        for page in pdf_reader.pages:
-            text += page.extract_text() + '\n'
-        
-        # Extract structured data
-        data = extract_structured_data(text)
-        
-        return pd.DataFrame(data)
-    except Exception as e:
-        st.error(f"Error processing PDF: {str(e)}")
-        return None
+# Update the display formatting
+def format_dataframe(df):
+    """Apply consistent formatting to the dataframe"""
+    # Ensure columns are in correct order
+    column_order = ['Section', 'Feature', 'Option', 'Variant', 'Description', 'Quantity', 'Price']
+    df = df[column_order]
+    
+    # Clean up empty values
+    df = df.fillna('')
+    
+    # Format quantity column
+    df['Quantity'] = df['Quantity'].apply(lambda x: str(x).strip())
+    
+    # Format price column
+    def format_price(price):
+        if pd.isna(price) or price == '':
+            return ''
+        if price == 'Standard':
+            return price
+        try:
+            return f"{float(str(price).replace(',', '')):,.2f}"
+        except:
+            return price
+    
+    df['Price'] = df['Price'].apply(format_price)
+    
+    return df
 
-# Page configuration
-st.set_page_config(
-    page_title="PDF Specification Extraction",
-    page_icon="📄",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Add custom CSS
-st.markdown("""
-    <style>
-    .stButton>button {
-        width: 100%;
-    }
-    .css-1v0mbdj {
-        width: 100%;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-# Main UI
-st.title("📄 PDF Specification Extraction Tool")
-
-st.markdown("""
-Upload a factory specification PDF to extract and analyze its contents.
-The tool will organize the data into a structured format with proper handling of specifications and sub-descriptions.
-""")
-
-# File uploader
-uploaded_file = st.file_uploader("Upload Factory PDF", type=['pdf'])
-
-if uploaded_file:
-    # Add processing button
-    if st.button("Extract Specifications", type="primary"):
-        with st.spinner("Processing PDF..."):
-            # Process the PDF
-            results_df = process_pdf(uploaded_file)
-            
-            if results_df is not None:
-                # Show success message
-                st.success("PDF processed successfully!")
-                
-                # Create tabs for different views
-                tab1, tab2, tab3 = st.tabs(["📊 Data View", "🔍 Filtered View", "📈 Summary"])
-                
-                with tab1:
-                    st.subheader("Complete Dataset")
-                    st.dataframe(
-                        results_df,
-                        column_config={
-                            "Section": st.column_config.TextColumn("Section", width=120),
-                            "Feature": st.column_config.TextColumn("Feature", width=150),
-                            "Option": st.column_config.TextColumn("Option", width=100),
-                            "Variant": st.column_config.TextColumn("Variant", width=100),
-                            "Description": st.column_config.TextColumn("Description", width=400),
-                            "Quantity": st.column_config.TextColumn("Quantity", width=80),
-                            "Price": st.column_config.TextColumn("Price", width=100),
-                        },
-                        use_container_width=True,
-                        hide_index=True
-                    )
-                
-                with tab2:
-                    st.subheader("Filter Data")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        selected_section = st.multiselect(
-                            "Filter by Section",
-                            options=sorted(results_df['Section'].unique())
-                        )
-                    with col2:
-                        selected_feature = st.multiselect(
-                            "Filter by Feature",
-                            options=sorted(results_df['Feature'].unique())
-                        )
-                    
-                    # Apply filters
-                    filtered_df = results_df.copy()
-                    if selected_section:
-                        filtered_df = filtered_df[filtered_df['Section'].isin(selected_section)]
-                    if selected_feature:
-                        filtered_df = filtered_df[filtered_df['Feature'].isin(selected_feature)]
-                    
-                    if selected_section or selected_feature:
-                        st.dataframe(filtered_df, use_container_width=True, hide_index=True)
-                
-                with tab3:
-                    st.subheader("Data Summary")
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Total Items", len(results_df))
-                    with col2:
-                        st.metric("Unique Sections", len(results_df['Section'].unique()))
-                    with col3:
-                        st.metric("Unique Features", len(results_df['Feature'].unique()))
-                    
-                    # Section breakdown
-                    st.subheader("Items per Section")
-                    section_counts = results_df['Section'].value_counts()
-                    st.bar_chart(section_counts)
-                
-                # Download options
-                st.subheader("Download Data")
-                col1, col2 = st.columns(2)
-                with col1:
-                    # Excel download
-                    excel_buffer = BytesIO()
-                    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-                        results_df.to_excel(writer, index=False)
-                    
-                    st.download_button(
-                        label="📥 Download Excel",
-                        data=excel_buffer.getvalue(),
-                        file_name="specifications.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                
-                with col2:
-                    # CSV download
-                    csv_buffer = BytesIO()
-                    results_df.to_csv(csv_buffer, index=False)
-                    
-                    st.download_button(
-                        label="📥 Download CSV",
-                        data=csv_buffer.getvalue(),
-                        file_name="specifications.csv",
-                        mime="text/csv"
-                    )
-
-else:
-    st.info("👆 Please upload a PDF file to begin extraction")
-
-# Footer
-st.markdown("---")
-st.markdown("Made with ❤️ using Streamlit")
+# Update Streamlit display
+def display_results(results_df):
+    """Display results with proper formatting"""
+    formatted_df = format_dataframe(results_df)
+    
+    st.dataframe(
+        formatted_df,
+        column_config={
+            "Section": st.column_config.TextColumn("Section", width=120),
+            "Feature": st.column_config.TextColumn("Feature", width=150),
+            "Option": st.column_config.TextColumn("Option Code", width=100),
+            "Variant": st.column_config.TextColumn("Variant", width=100),
+            "Description": st.column_config.TextColumn("Description", width=400),
+            "Quantity": st.column_config.TextColumn("Qty", width=80),
+            "Price": st.column_config.TextColumn("Price", width=100)
+        },
+        use_container_width=True,
+        hide_index=True
+    )
