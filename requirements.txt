@@ -1,7 +1,2 @@
 streamlit
-pandas
-PyPDF2
-rapidfuzz
-numpy
-openpyxl
-scikit-learn
+anthropic
