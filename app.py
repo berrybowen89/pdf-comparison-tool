@@ -7,13 +7,12 @@ import pandas as pd
 from difflib import SequenceMatcher
 import pdfplumber
 import re
+import time
 from typing import List, Dict
 import fitz  # PyMuPDF
 
 # Streamlit page config
 st.set_page_config(page_title="Sales Quote Comparison", page_icon="💼", layout="wide")
-
-# Initialize Streamlit page
 st.title("Sales Quote Line Item Comparison")
 st.markdown("Using Claude 3 Opus for Enhanced Analysis")
 
@@ -34,22 +33,52 @@ if 'quote2' not in st.session_state:
 if 'comparison_results' not in st.session_state:
     st.session_state.comparison_results = None
 
+def enhanced_pdf_extraction(file) -> Dict[str, any]:
+    """Improved PDF text extraction combining multiple methods."""
+    text_pdfplumber = extract_pdf_text_pdfplumber(file)
+    text_pymupdf = extract_pdf_text_pymupdf(file)
+    
+    combined_text = []
+    with pdfplumber.open(file) as pdf:
+        for page in pdf.pages:
+            words = page.extract_words(x_tolerance=3, y_tolerance=3)
+            for word in words:
+                combined_text.append({
+                    'text': word['text'],
+                    'x0': word['x0'],
+                    'y0': word['y0'],
+                    'line_number': int(word['y0'] / 10)
+                })
+    
+    lines = {}
+    for word in combined_text:
+        line_num = word['line_number']
+        if line_num not in lines:
+            lines[line_num] = []
+        lines[line_num].append(word['text'])
+    
+    formatted_text = '\n'.join([' '.join(line) for line in lines.values()])
+    
+    return {
+        'text': formatted_text,
+        'pdfplumber_text': text_pdfplumber,
+        'pymupdf_text': text_pymupdf,
+        'word_positions': combined_text
+    }
+
 def extract_pdf_text_pdfplumber(file) -> str:
     """Extract text from PDF using pdfplumber with enhanced formatting."""
     try:
         with pdfplumber.open(file) as pdf:
             pages_text = []
             for page in pdf.pages:
-                # Extract text with better handling of tables and layouts
                 text = page.extract_text(x_tolerance=3, y_tolerance=3)
-                # Extract tables and format them properly
                 tables = page.extract_tables()
                 formatted_tables = []
                 for table in tables:
                     formatted_table = '\n'.join(['\t'.join([str(cell) if cell else '' for cell in row]) for row in table])
                     formatted_tables.append(formatted_table)
                 
-                # Combine regular text and tables
                 page_text = text + '\n' + '\n'.join(formatted_tables)
                 pages_text.append(page_text)
             
@@ -70,13 +99,13 @@ def extract_pdf_text_pymupdf(file) -> str:
             page_text = []
             
             for block in blocks:
-                if block["type"] == 0:  # Text block
+                if block["type"] == 0:
                     for line in block["lines"]:
                         line_text = ""
                         for span in line["spans"]:
                             line_text += span["text"]
                         page_text.append(line_text)
-                elif block["type"] == 1:  # Image block
+                elif block["type"] == 1:
                     page_text.append("[Image]")
             
             pages_text.append("\n".join(page_text))
@@ -86,6 +115,48 @@ def extract_pdf_text_pymupdf(file) -> str:
     except Exception as e:
         st.error(f"Error in PyMuPDF extraction: {str(e)}")
         return ""
+
+def chunk_document(text: str, max_tokens: int = 3000) -> List[str]:
+    """Split document into chunks for API processing."""
+    chunks = []
+    current_chunk = []
+    current_length = 0
+    
+    for line in text.split('\n'):
+        line_tokens = len(line.split()) + len([c for c in line if c in '.,;:!?'])
+        
+        if current_length + line_tokens > max_tokens:
+            chunks.append('\n'.join(current_chunk))
+            current_chunk = [line]
+            current_length = line_tokens
+        else:
+            current_chunk.append(line)
+            current_length += line_tokens
+    
+    if current_chunk:
+        chunks.append('\n'.join(current_chunk))
+    
+    return chunks
+
+def process_with_claude(client, content: str, retries: int = 3):
+    """Process content with Claude API with retry logic."""
+    for attempt in range(retries):
+        try:
+            response = client.messages.create(
+                model="claude-3-opus-20240229",
+                max_tokens=4096,
+                messages=[{
+                    "role": "user",
+                    "content": content
+                }]
+            )
+            return response
+        except Exception as e:
+            if attempt == retries - 1:
+                raise e
+            time.sleep(2 ** attempt)
+            
+    return None
 
 def clean_text(text: str) -> str:
     """Clean and normalize extracted text."""
@@ -116,24 +187,15 @@ def extract_tables_from_text(text: str) -> List[List[str]]:
     return tables
 
 def read_file(file) -> Dict[str, str]:
-    """Enhanced file reading with better PDF handling and text preprocessing."""
+    """Enhanced file reading with better PDF handling."""
     try:
         if file.type == "application/pdf":
-            text_pdfplumber = extract_pdf_text_pdfplumber(file)
-            text_pymupdf = extract_pdf_text_pymupdf(file)
-            
-            text = text_pdfplumber if len(text_pdfplumber) > len(text_pymupdf) else text_pymupdf
-            tables = extract_tables_from_text(text)
-            formatted_tables = ['\n'.join(['\t'.join(row) for row in table]) for table in tables]
-            final_text = text + '\n\n' + '\n\n'.join(formatted_tables)
-            final_text = clean_text(final_text)
-            
+            extracted_data = enhanced_pdf_extraction(file)
             return {
-                'text': final_text,
-                'tables': tables,
-                'raw_text': text
+                'text': extracted_data['text'],
+                'tables': extract_tables_from_text(extracted_data['text']),
+                'raw_text': extracted_data['pdfplumber_text']
             }
-            
         elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
             doc = docx.Document(file)
             text = '\n'.join(paragraph.text for paragraph in doc.paragraphs)
@@ -143,7 +205,7 @@ def read_file(file) -> Dict[str, str]:
                 'tables': tables,
                 'raw_text': text
             }
-        else:  # txt files
+        else:
             text = file.getvalue().decode('utf-8')
             return {
                 'text': clean_text(text),
@@ -153,10 +215,11 @@ def read_file(file) -> Dict[str, str]:
     except Exception as e:
         st.error(f"Error reading file {file.name}: {str(e)}")
         return {'text': '', 'tables': [], 'raw_text': ''}
-        # Create two columns for file uploads
+
+# Create two columns for file uploads
 col1, col2 = st.columns(2)
 
-# Modified file upload handling
+# File upload handling
 with col1:
     st.subheader("Quote 1")
     quote1_file = st.file_uploader(
@@ -174,14 +237,12 @@ with col1:
         }
         st.success(f"Quote 1 uploaded: {quote1_file.name}")
         
-        # Show preview with tabs for different views
         preview_tab1, preview_tab2 = st.tabs(["Processed Text", "Raw Text"])
         with preview_tab1:
             st.text(extracted_data['text'][:1000] + "...")
         with preview_tab2:
             st.text(extracted_data['raw_text'][:1000] + "...")
             
-        # Show detected tables
         if extracted_data['tables']:
             with st.expander("View Detected Tables"):
                 for i, table in enumerate(extracted_data['tables']):
@@ -205,14 +266,12 @@ with col2:
         }
         st.success(f"Quote 2 uploaded: {quote2_file.name}")
         
-        # Show preview with tabs for different views
         preview_tab1, preview_tab2 = st.tabs(["Processed Text", "Raw Text"])
         with preview_tab1:
             st.text(extracted_data['text'][:1000] + "...")
         with preview_tab2:
             st.text(extracted_data['raw_text'][:1000] + "...")
             
-        # Show detected tables
         if extracted_data['tables']:
             with st.expander("View Detected Tables"):
                 for i, table in enumerate(extracted_data['tables']):
@@ -221,73 +280,59 @@ with col2:
 
 # Compare button
 if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.quote2:
-    # Create a progress bar
     progress_bar = st.progress(0)
     status_text = st.empty()
     
     try:
-        # Stage 1: Document Processing
         status_text.text("Stage 1/4: Processing documents...")
         progress_bar.progress(25)
         
-        comparison_prompt = f"""
-        Compare these two quotes and create a clear markdown table showing ONLY:
-        | Line Item | Quote 1 Description | Quote 2 Description | Match Status |
-
-        Quote 1: {st.session_state.quote1['content']}
-        Quote 2: {st.session_state.quote2['content']}
-
-        Use these match indicators:
-        ✓ = Exact match
-        ~ = Partial match
-        [1] = Only in Quote 1
-        [2] = Only in Quote 2
-
-        After the table, list:
-        1. Total number of items
-        2. Number of exact matches
-        3. Number of partial matches
-        4. Items unique to each quote
-        """
+        quote1_chunks = chunk_document(st.session_state.quote1['content'])
+        quote2_chunks = chunk_document(st.session_state.quote2['content'])
         
-        # Stage 2: Sending to Claude
         status_text.text("Stage 2/4: Analyzing with Claude...")
         progress_bar.progress(50)
         
-        response = st.session_state.anthropic_client.messages.create(
-            model="claude-3-opus-20240229",
-            max_tokens=4096,
-            messages=[{
-                "role": "user",
-                "content": comparison_prompt
-            }]
-        )
+        results = []
+        for q1_chunk, q2_chunk in zip(quote1_chunks, quote2_chunks):
+            chunk_prompt = f"""
+            Compare these quote sections and create a clear markdown table showing ONLY:
+            | Line Item | Quote 1 Description | Quote 2 Description | Match Status |
+
+            Quote 1: {q1_chunk}
+            Quote 2: {q2_chunk}
+
+            Use these match indicators:
+            ✓ = Exact match
+            ~ = Partial match
+            [1] = Only in Quote 1
+            [2] = Only in Quote 2
+            """
+            
+            chunk_result = process_with_claude(st.session_state.anthropic_client, chunk_prompt)
+            results.append(chunk_result.content[0].text)
         
-        # Stage 3: Processing Results
         status_text.text("Stage 3/4: Processing results...")
         progress_bar.progress(75)
         
-        # Stage 4: Displaying Results
+        combined_results = '\n'.join(results)
+        
         status_text.text("Stage 4/4: Generating comparison table...")
         progress_bar.progress(90)
         
-        # Display final results
         st.markdown("### Line Item Comparison")
-        st.markdown(response.content[0].text)
+        st.markdown(combined_results)
         
-        # Add download button
         st.download_button(
             "Download Comparison",
-            response.content[0].text,
+            combined_results,
             "comparison.csv",
             "text/csv"
         )
         
-        # Complete the progress bar
         progress_bar.progress(100)
         status_text.text("Analysis complete! ✅")
         
-        # Add timestamp
         st.markdown(f"*Analysis completed at {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}*")
 
     except Exception as e:
@@ -305,7 +350,7 @@ st.markdown("""
     - [2] : Only in Quote 2
 """)
 
-# Add a clear button at the bottom
+# Clear button
 if st.button("Clear and Start Over"):
     st.session_state.quote1 = None
     st.session_state.quote2 = None
