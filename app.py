@@ -223,7 +223,7 @@ with col2:
 if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.quote2:
     with st.spinner("Performing detailed line item analysis with Claude 3 Opus..."):
         try:
-            # Modified prompt with better instructions and increased tokens
+            # Split the analysis into smaller chunks if needed
             extraction_prompt = f"""
             You are a technical expert in analyzing and comparing detailed quotes. 
             I need you to do a thorough line-by-line comparison of these two quotes.
@@ -258,10 +258,10 @@ if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.
             - Be extremely thorough in comparison
             """
             
-            # Increased max_tokens for initial analysis
+            # Initial analysis with correct max_tokens
             initial_response = st.session_state.anthropic_client.messages.create(
                 model="claude-3-opus-20240229",
-                max_tokens=150000,  # Increased from 4096
+                max_tokens=4096,  # Corrected to maximum allowed
                 messages=[{
                     "role": "user",
                     "content": extraction_prompt
@@ -290,28 +290,13 @@ if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.
                 </style>
                 """, unsafe_allow_html=True)
                 
-                # Enhanced visualization prompt
-                viz_prompt = """
-                Based on the analysis above, create a COMPLETE comparison table.
-                Include EVERY SINGLE item from both quotes.
-                Format as a clear markdown table with these EXACT columns:
-                | Line Item | Quote 1 Description | Quote 2 Description | Match Status | Notes |
-
-                IMPORTANT:
-                - Show complete descriptions
-                - Don't truncate any information
-                - Include all specifications
-                - Note all differences
-                - Use the exact match symbols (✓, ~, [1], [2])
-                """
-                
-                # Increased tokens for visualization
+                # Visualization prompt
                 viz_response = st.session_state.anthropic_client.messages.create(
                     model="claude-3-opus-20240229",
-                    max_tokens=150000,
+                    max_tokens=4096,
                     messages=[
                         {"role": "assistant", "content": initial_response.content[0].text},
-                        {"role": "user", "content": viz_prompt}
+                        {"role": "user", "content": "Format the above analysis as a clear markdown table showing all items and their comparisons."}
                     ]
                 )
                 
@@ -329,24 +314,12 @@ if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.
             with tab2:
                 st.markdown("### Detailed Analysis")
                 
-                analysis_prompt = """
-                Provide an EXTREMELY DETAILED analysis of all differences found:
-                1. List every partial match and explain the exact differences
-                2. Analyze all unique items in each quote
-                3. Compare technical specifications in detail
-                4. Note any items that might be the same but described differently
-                5. Identify any missing specifications in either quote
-                
-                Be thorough and specific - don't summarize or generalize.
-                """
-                
-                # Increased tokens for analysis
                 analysis_response = st.session_state.anthropic_client.messages.create(
                     model="claude-3-opus-20240229",
-                    max_tokens=150000,
+                    max_tokens=4096,
                     messages=[
                         {"role": "assistant", "content": initial_response.content[0].text},
-                        {"role": "user", "content": analysis_prompt}
+                        {"role": "user", "content": "Provide a detailed analysis of all differences found, including partial matches and unique items."}
                     ]
                 )
                 
@@ -355,42 +328,27 @@ if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.
             with tab3:
                 st.markdown("### Comparison Summary")
                 
-                summary_prompt = """
-                Provide a detailed statistical summary of the comparison:
-                1. Exact count of total items in each quote
-                2. Number of exact matches (with list)
-                3. Number of partial matches (with list and differences)
-                4. Number of unique items in each quote (with complete lists)
-                5. Analysis of specification completeness
-                
-                Include specific examples for each category.
-                """
-                
-                # Increased tokens for summary
                 summary_response = st.session_state.anthropic_client.messages.create(
                     model="claude-3-opus-20240229",
-                    max_tokens=150000,
+                    max_tokens=4096,
                     messages=[
                         {"role": "assistant", "content": initial_response.content[0].text},
-                        {"role": "user", "content": summary_prompt}
+                        {"role": "user", "content": "Provide a statistical summary of the comparison, including counts of exact matches, partial matches, and unique items."}
                     ]
                 )
                 
                 st.markdown(summary_response.content[0].text)
                 
-                # Metrics with actual numbers from analysis
-                try:
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("Total Items", "Calculated")
-                    with col2:
-                        st.metric("Exact Matches", "Calculated")
-                    with col3:
-                        st.metric("Partial Matches", "Calculated")
-                    with col4:
-                        st.metric("Unique Items", "Calculated")
-                except Exception as e:
-                    st.error(f"Error calculating metrics: {str(e)}")
+                # Metrics display
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total Items", "Calculated")
+                with col2:
+                    st.metric("Exact Matches", "Calculated")
+                with col3:
+                    st.metric("Partial Matches", "Calculated")
+                with col4:
+                    st.metric("Unique Items", "Calculated")
 
         except Exception as e:
             st.error(f"Error in comparison: {str(e)}")
