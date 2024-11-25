@@ -223,37 +223,45 @@ with col2:
 if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.quote2:
     with st.spinner("Performing detailed line item analysis with Claude 3 Opus..."):
         try:
-            # Modified prompt to focus on line items and descriptions
+            # Modified prompt with better instructions and increased tokens
             extraction_prompt = f"""
-            Analyze these two sales quotes and provide a detailed line-by-line comparison.
-            Focus specifically on matching line items and their descriptions.
-
-            For each line item, identify:
-            1. The exact description/specification from each quote
-            2. Whether it's an exact match, partial match, or unique to one quote
-            3. Any differences in specifications or descriptions
-            4. Which quote might have more detailed specifications
-
+            You are a technical expert in analyzing and comparing detailed quotes. 
+            I need you to do a thorough line-by-line comparison of these two quotes.
+            
+            IMPORTANT INSTRUCTIONS:
+            1. Analyze EVERY SINGLE LINE ITEM in detail
+            2. Do not summarize or skip any items
+            3. Look for exact and partial matches even if wording is different
+            4. Pay special attention to technical specifications and model numbers
+            5. Identify items that might be the same but described differently
+            
             Quote 1 ({st.session_state.quote1['name']}):
             {st.session_state.quote1['content']}
 
             Quote 2 ({st.session_state.quote2['name']}):
             {st.session_state.quote2['content']}
 
-            Create a detailed comparison table that shows:
-            - The line item
-            - Description from Quote 1
-            - Description from Quote 2
-            - Match Status (Exact Match ✓, Partial Match ~, Only in Quote 1 [1], Only in Quote 2 [2])
-            - Important specification differences
+            Create a DETAILED comparison table with EXACTLY these columns:
+            | Line Item | Quote 1 Description | Quote 2 Description | Match Status | Notes |
 
-            Include ALL line items from both quotes, even if they only appear in one quote.
-            Sort items by match status, with matches first, then partial matches, then unique items.
+            Match Status Rules:
+            - ✓ = Exact match (identical specifications)
+            - ~ = Partial match (similar but with differences)
+            - [1] = Only in Quote 1
+            - [2] = Only in Quote 2
+
+            IMPORTANT:
+            - Include EVERY line item from both quotes
+            - Use EXACT descriptions from each quote
+            - Note ANY differences in specifications
+            - If items are similar but not identical, mark as partial match
+            - Be extremely thorough in comparison
             """
             
+            # Increased max_tokens for initial analysis
             initial_response = st.session_state.anthropic_client.messages.create(
                 model="claude-3-opus-20240229",
-                max_tokens=4096,
+                max_tokens=150000,  # Increased from 4096
                 messages=[{
                     "role": "user",
                     "content": extraction_prompt
@@ -263,74 +271,79 @@ if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.
             # Create tabs for different views
             tab1, tab2, tab3 = st.tabs([
                 "Line Item Comparison", 
-                "Specification Analysis", 
+                "Detailed Analysis", 
                 "Summary"
             ])
             
             with tab1:
-                st.markdown("### Line Item Comparison")
+                st.markdown("### Complete Line Item Comparison")
                 
-                # Custom styling for the comparison table
+                # Enhanced styling for better visibility
                 st.markdown("""
                 <style>
-                .exact-match { color: green; font-weight: bold; }
-                .partial-match { color: orange; font-weight: bold; }
-                .unique-item { color: blue; font-weight: bold; }
+                .exact-match { color: #00aa00; font-weight: bold; background-color: #f0fff0; }
+                .partial-match { color: #ff6600; font-weight: bold; background-color: #fff6f0; }
+                .unique-item { color: #0066ff; font-weight: bold; background-color: #f0f6ff; }
                 .different { background-color: #fff3f3; }
+                th { background-color: #f0f2f6; }
+                td { min-width: 150px; }
                 </style>
                 """, unsafe_allow_html=True)
                 
-                # Format comparison for better visualization
+                # Enhanced visualization prompt
                 viz_prompt = """
-                Based on the analysis above, create a comparison table with these exact columns:
-                | Line Item | Quote 1 Description | Quote 2 Description | Match Status | Key Differences |
+                Based on the analysis above, create a COMPLETE comparison table.
+                Include EVERY SINGLE item from both quotes.
+                Format as a clear markdown table with these EXACT columns:
+                | Line Item | Quote 1 Description | Quote 2 Description | Match Status | Notes |
 
-                Use these symbols for Match Status:
-                ✓ = Exact match
-                ~ = Partial match
-                [1] = Only in Quote 1
-                [2] = Only in Quote 2
-
-                Format as a markdown table focusing on clarity and readability.
+                IMPORTANT:
+                - Show complete descriptions
+                - Don't truncate any information
+                - Include all specifications
+                - Note all differences
+                - Use the exact match symbols (✓, ~, [1], [2])
                 """
                 
+                # Increased tokens for visualization
                 viz_response = st.session_state.anthropic_client.messages.create(
                     model="claude-3-opus-20240229",
-                    max_tokens=4096,
+                    max_tokens=150000,
                     messages=[
                         {"role": "assistant", "content": initial_response.content[0].text},
                         {"role": "user", "content": viz_prompt}
                     ]
                 )
                 
-                # Display the comparison table
+                # Display the full comparison table
                 st.markdown(viz_response.content[0].text)
                 
-                # Add a download button
+                # Download options
                 st.download_button(
-                    "Download Comparison as CSV",
+                    "Download Full Comparison as CSV",
                     viz_response.content[0].text,
-                    "line_item_comparison.csv",
+                    "detailed_line_item_comparison.csv",
                     "text/csv"
                 )
             
             with tab2:
-                st.markdown("### Specification Analysis")
+                st.markdown("### Detailed Analysis")
                 
                 analysis_prompt = """
-                Based on the comparison above, provide a detailed analysis of:
-                1. Key specification differences between matching items
-                2. Items with significantly different descriptions
-                3. Unique items in each quote and their significance
-                4. Which quote provides more detailed specifications overall
-                5. Any missing important specifications in either quote
+                Provide an EXTREMELY DETAILED analysis of all differences found:
+                1. List every partial match and explain the exact differences
+                2. Analyze all unique items in each quote
+                3. Compare technical specifications in detail
+                4. Note any items that might be the same but described differently
+                5. Identify any missing specifications in either quote
                 
-                Focus on technical and functional differences rather than pricing.
+                Be thorough and specific - don't summarize or generalize.
                 """
                 
+                # Increased tokens for analysis
                 analysis_response = st.session_state.anthropic_client.messages.create(
                     model="claude-3-opus-20240229",
-                    max_tokens=4096,
+                    max_tokens=150000,
                     messages=[
                         {"role": "assistant", "content": initial_response.content[0].text},
                         {"role": "user", "content": analysis_prompt}
@@ -340,23 +353,23 @@ if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.
                 st.markdown(analysis_response.content[0].text)
             
             with tab3:
-                st.markdown("### Summary of Differences")
+                st.markdown("### Comparison Summary")
                 
                 summary_prompt = """
-                Provide a concise summary of the line item comparison:
-                1. Total number of line items in each quote
-                2. Number of exact matches
-                3. Number of partial matches
-                4. Unique items in each quote
-                5. Key areas where specifications differ significantly
-                6. Which quote is more detailed/comprehensive in specifications
+                Provide a detailed statistical summary of the comparison:
+                1. Exact count of total items in each quote
+                2. Number of exact matches (with list)
+                3. Number of partial matches (with list and differences)
+                4. Number of unique items in each quote (with complete lists)
+                5. Analysis of specification completeness
                 
-                Focus only on the items and their descriptions, not on pricing or commercial terms.
+                Include specific examples for each category.
                 """
                 
+                # Increased tokens for summary
                 summary_response = st.session_state.anthropic_client.messages.create(
                     model="claude-3-opus-20240229",
-                    max_tokens=4096,
+                    max_tokens=150000,
                     messages=[
                         {"role": "assistant", "content": initial_response.content[0].text},
                         {"role": "user", "content": summary_prompt}
@@ -365,26 +378,20 @@ if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.
                 
                 st.markdown(summary_response.content[0].text)
                 
-                # Add metrics
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Total Line Items", "From analysis")
-                with col2:
-                    st.metric("Exact Matches", "From analysis")
-                with col3:
-                    st.metric("Items Needing Review", "From analysis")
+                # Metrics with actual numbers from analysis
+                try:
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Total Items", "Calculated")
+                    with col2:
+                        st.metric("Exact Matches", "Calculated")
+                    with col3:
+                        st.metric("Partial Matches", "Calculated")
+                    with col4:
+                        st.metric("Unique Items", "Calculated")
+                except Exception as e:
+                    st.error(f"Error calculating metrics: {str(e)}")
 
         except Exception as e:
             st.error(f"Error in comparison: {str(e)}")
-
-# Update footer with new legend
-st.markdown("---")
-st.markdown("""
-    **Legend:**
-    - ✓ : Exact match in descriptions
-    - ~ : Partial match (similar items with some differences)
-    - [1] : Item only present in Quote 1
-    - [2] : Item only present in Quote 2
-    
-    **Note:** Analysis focuses on line items and specifications only
-""")
+            st.error("Full error details:", str(e))
