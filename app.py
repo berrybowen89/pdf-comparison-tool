@@ -7,10 +7,12 @@ from io import BytesIO
 import re
 
 def extract_structured_data(text):
-    """Extract data with proper column separation"""
+    """Extract data with proper handling of sub-descriptions"""
     lines = text.split('\n')
     structured_data = []
     current_section = None
+    current_description = []
+    previous_data = None
     
     for line in lines:
         # Skip empty lines and headers/footers
@@ -29,6 +31,11 @@ def extract_structured_data(text):
             'Kitchen', 'Appliances', 'Interior', 'Plumbing/Heating', 'Primary Bath',
             'Hall Bath', 'Utility Room', 'Floor Covering', 'Countertop'
         ]):
+            # If we have a pending description, add it to the previous item
+            if previous_data and current_description:
+                previous_data['Description'] = ' '.join(current_description).strip()
+                current_description = []
+            
             current_section = line.strip()
             continue
             
@@ -36,8 +43,18 @@ def extract_structured_data(text):
         if "Feature" in line and "Option" in line and "Description" in line:
             continue
             
-        # Use regex to match the specific pattern of the line
-        # Looking for: FEATURE OP000000 [Variant] Description Quantity Price
+        # Check if this is a sub-description (starts with - or ~)
+        if line.strip().startswith(('-', '~', '**', '..')):
+            if previous_data:
+                current_description.append(line.strip())
+            continue
+            
+        # If we have a pending description, add it to the previous item
+        if previous_data and current_description:
+            previous_data['Description'] = ' '.join([previous_data['Description']] + current_description).strip()
+            current_description = []
+        
+        # Use regex to match the main line pattern
         feature_match = re.match(r'^([A-Z][A-Z0-9/\s]+(?:\s*&\s*[A-Z]+)*)', line.strip())
         option_match = re.search(r'(OP\d{6})', line)
         
@@ -58,7 +75,7 @@ def extract_structured_data(text):
             # Extract option code
             if option_match:
                 data['Option'] = option_match.group(1)
-                line = line.replace(data['Option'], '')  # Remove option code from line
+                line = line.replace(data['Option'], '')
             
             # Extract quantity
             qty_match = re.search(r'(\d+\s*(?:EA|LF|SF|D\$))', line)
@@ -74,21 +91,20 @@ def extract_structured_data(text):
             
             # Extract variant
             variants = ['Nickel', 'White', 'Brown', 'Matte', 'Expresso', 
-                       'Toasted Almond', 'Linen Ruffle', 'Dual Black', 'Flint Rock']
+                       'Toasted Almond', 'Linen Ruffle', 'Dual Black', 'Flint Rock',
+                       'Chandler Oak']
             for variant in variants:
                 if variant in line:
                     data['Variant'] = variant
                     line = line.replace(variant, '')
                     break
             
-            # Clean up the line by removing feature and other extracted parts
+            # Clean up the line by removing feature
             line = line.replace(feature, '')
             
             # Whatever remains is the description
             description = ' '.join(line.split())
-            # Clean up any remaining multiple spaces or special characters
             description = re.sub(r'\s+', ' ', description).strip()
-            # Remove any leading/trailing special characters
             description = re.sub(r'^[^a-zA-Z0-9]*|[^a-zA-Z0-9]*$', '', description)
             
             if description and not description.isspace():
@@ -97,6 +113,12 @@ def extract_structured_data(text):
             # Only add if we have meaningful data
             if data['Feature'] and (data['Option'] or data['Description']):
                 structured_data.append(data)
+                previous_data = data
+                current_description = []
+    
+    # Handle any remaining description for the last item
+    if previous_data and current_description:
+        previous_data['Description'] = ' '.join([previous_data['Description']] + current_description).strip()
     
     return structured_data
 
@@ -109,6 +131,9 @@ def compare_pdfs(factory_text):
     
     # Clean up the data
     df = df.fillna('')
+    
+    # Clean up descriptions
+    df['Description'] = df['Description'].apply(lambda x: re.sub(r'\s+', ' ', x))
     
     # Remove any rows where Feature is just whitespace or empty
     df = df[df['Feature'].str.strip() != '']
@@ -143,7 +168,7 @@ if factory_file:
                     "Feature": st.column_config.TextColumn("Feature", width=150),
                     "Option": st.column_config.TextColumn("Option", width=100),
                     "Variant": st.column_config.TextColumn("Variant", width=100),
-                    "Description": st.column_config.TextColumn("Description", width=300),
+                    "Description": st.column_config.TextColumn("Description", width=400),
                     "Quantity": st.column_config.TextColumn("Quantity", width=80),
                     "Price": st.column_config.TextColumn("Price", width=100),
                 },
@@ -169,14 +194,6 @@ if factory_file:
             st.write(f"Sections Found: {len(results_df['Section'].unique())}")
             st.write(f"Options with Pricing: {len(results_df[results_df['Price'] != ''])}")
             
-            # Display sections found
-            st.subheader("Sections Found")
-            st.write(", ".join(sorted(results_df['Section'].unique())))
-            
-            # Debug view
-            with st.expander("Show Raw Text (Debug)"):
-                st.text(factory_text)
-            
         except Exception as e:
             st.error(f"An error occurred: {str(e)}")
             st.error("Error details:", exc_info=True)
@@ -186,4 +203,4 @@ else:
 
 # Add footer
 st.markdown("---")
-st.markdown("v2.2 - Specification Extraction Tool")
+st.markdown("v2.3 - Specification Extraction Tool")
