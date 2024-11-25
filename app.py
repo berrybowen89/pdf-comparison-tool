@@ -7,6 +7,7 @@ import pandas as pd
 from difflib import SequenceMatcher
 import pdfplumber
 import re
+import json
 from typing import List, Dict
 import fitz  # PyMuPDF
 
@@ -219,94 +220,67 @@ with col2:
                     st.markdown(f"**Table {i+1}**")
                     st.dataframe(pd.DataFrame(table))
 
-# Compare button
-if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.quote2:
-    # Create a progress bar
-    progress_bar = st.progress(0)
-    status_text = st.empty()
+def compare_quotes(quote1_data, quote2_data):
+    comparison_prompt = f"""
+    Thoroughly compare the attached sales quotes, analyzing both text and tables. Generate a structured JSON response with these sections:
+
+    1. Summary: Key insights and differences between the quotes
+    2. LineItemComparison: Markdown table comparing each line item 
+       Columns: 
+       - LineItem: Description of item
+       - Quote1Value: Value from Quote 1 (numeric where applicable)  
+       - Quote2Value: Value from Quote 2 (numeric where applicable)
+       - MatchStatus: Exact match (✓), Partial match (~), Only in Quote 1 ([1]), Only in Quote 2 ([2]) 
+       - Difference: Difference between Quote1Value and Quote2Value (blank if n/a)
+    3. TableComparison: Insights from comparing any tables
+    4. UniqueItems: List items unique to each quote
+    5. Statistics:
+       - TotalItems: Total line items compared  
+       - ExactMatches: Number of exact matches
+       - PartialMatches: Number of partial or fuzzy matches
+       - ItemsOnlyQuote1: Number of items only in Quote 1
+       - ItemsOnlyQuote2: Number of items only in Quote 2
+
+    Quote 1: {quote1_data}
+    Quote 2: {quote2_data}
+    """
     
-    try:
-        # Stage 1: Document Processing
-        status_text.text("Stage 1/4: Processing documents...")
-        progress_bar.progress(25)
-        
-        comparison_prompt = f"""
-        Compare these two quotes and create a clear markdown table showing ONLY:
-        | Line Item | Quote 1 Description | Quote 2 Description | Match Status |
+    response = st.session_state.anthropic_client.messages.create(
+        model="claude-3-opus-20240229", 
+        max_tokens=4096,
+        messages=[{
+            "role": "user",
+            "content": comparison_prompt
+        }]
+    )
+    
+    return response.content[0].text
 
-        Quote 1: {st.session_state.quote1['content']}
-        Quote 2: {st.session_state.quote2['content']}
-
-        Use these match indicators:
-        ✓ = Exact match
-        ~ = Partial match
-        [1] = Only in Quote 1
-        [2] = Only in Quote 2
-
-        After the table, list:
-        1. Total number of items
-        2. Number of exact matches
-        3. Number of partial matches
-        4. Items unique to each quote
-        """
+# In your existing code, replace the comparison logic with:
+if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.quote2:
+    # ...
+    try:  
+        # ...
+        comparison_result = compare_quotes(st.session_state.quote1['content'], st.session_state.quote2['content'])
+        comparison_json = json.loads(comparison_result)
         
-        # Stage 2: Sending to Claude
-        status_text.text("Stage 2/4: Analyzing with Claude...")
-        progress_bar.progress(50)
+        # Display results
+        st.markdown("### Comparison Summary")
+        st.markdown(comparison_json['Summary']) 
         
-        response = st.session_state.anthropic_client.messages.create(
-            model="claude-3-opus-20240229",
-            max_tokens=4096,
-            messages=[{
-                "role": "user",
-                "content": comparison_prompt
-            }]
-        )
-        
-        # Stage 3: Processing Results
-        status_text.text("Stage 3/4: Processing results...")
-        progress_bar.progress(75)
-        
-        # Stage 4: Displaying Results
-        status_text.text("Stage 4/4: Generating comparison table...")
-        progress_bar.progress(90)
-        
-        # Display final results
         st.markdown("### Line Item Comparison")
-        st.markdown(response.content[0].text)
+        st.markdown(comparison_json['LineItemComparison'])
         
-        # Add download button
-        st.download_button(
-            "Download Comparison",
-            response.content[0].text,
-            "comparison.csv",
-            "text/csv"
-        )
+        if comparison_json['TableComparison']:
+            st.markdown("### Table Comparison")
+            st.markdown(comparison_json['TableComparison'])
         
-        # Complete the progress bar
-        progress_bar.progress(100)
-        status_text.text("Analysis complete! ✅")
+        st.markdown("### Unique Items")
+        st.markdown(comparison_json['UniqueItems'])
         
-        # Add timestamp
-        st.markdown(f"*Analysis completed at {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}*")
-
+        st.markdown("### Comparison Statistics")
+        st.json(comparison_json['Statistics'])
+        
+        # ...
     except Exception as e:
-        progress_bar.empty()
-        status_text.empty()
-        st.error(f"Error in comparison: {str(e)}")
-
-# Footer
-st.markdown("---")
-st.markdown("""
-    **Legend:**
-    - ✓ : Exact match
-    - ~ : Partial match
-    - [1] : Only in Quote 1
-    - [2] : Only in Quote 2
-""")
-
-# Add a clear button at the bottom
-if st.button("Clear and Start Over"):
-    st.session_state.quote1 = None
-    st.session_state.quote2 = None
-    st.rerun()
+        # ...
