@@ -179,4 +179,28 @@ with col1:
         type=['pdf', 'docx', 'txt'],
         key="quote1_uploader"
     )
-    if quo
+    if quote1_file:
+        extracted_data = read_file(quote1_file)
+        st.session_state.quote1 = {
+            'name': quote1_file.name,
+            'content': extracted_data['text'],
+            'tables': extracted_data['tables'],
+            'raw_content': extracted_data['raw_text']
+        }
+        st.success(f"Quote 1 uploaded: {quote1_file.name}")
+        
+        # Show preview with tabs for different views
+        preview_tab1, preview_tab2 = st.tabs(["Processed Text", "Raw Text"])
+        with preview_tab1:
+            st.text(extracted_data['text'][:1000] + "...")
+        with preview_tab2:
+            st.text(extracted_data['raw_text'][:1000] + "...")
+            
+        # Show detected tables
+        if extracted_data['tables']:
+            with st.expander("View Detected Tables"):
+                for i, table in enumerate(extracted_data['tables']):
+                    st.markdown(f"**Table {i+1}**")
+                    st.dataframe(pd.DataFrame(table))
+
+# [Same for Quote 2 upload section]
