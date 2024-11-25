@@ -6,257 +6,161 @@ import numpy as np
 from io import BytesIO
 import re
 
-def extract_text_from_pdf(pdf_file):
-    """Improved PDF text extraction"""
-    pdf_reader = PdfReader(pdf_file)
-    full_text = []
+def extract_structured_data(text):
+    """Extract data specifically from Feature, Option, Variant, Description, Quantity, Price columns"""
+    lines = text.split('\n')
+    structured_data = []
+    current_section = None
     
-    for page in pdf_reader.pages:
-        text = page.extract_text()
+    for line in lines:
+        # Skip empty lines and page headers
+        if not line.strip() or "Champion is a registered trademark" in line:
+            continue
+            
+        # Check if line contains option code
+        option_match = re.search(r'(OP\d{6})', line)
         
-        # Split into lines and process each line
-        lines = text.split('\n')
-        for line in lines:
-            # Clean the line
-            line = line.strip()
+        # Try to extract structured data from line
+        if "Feature" in line and "Option" in line:
+            continue  # Skip header row
             
-            # Skip truly empty lines and page numbers only
-            if not line or (line.isdigit() and len(line) < 3):
-                continue
+        # Handle section headers
+        if line.strip().endswith('...') or line.strip() in [
+            'Construction', 'Exterior', 'Windows', 'Electrical', 'Cabinets', 
+            'Kitchen', 'Appliances', 'Interior', 'Plumbing/Heating'
+        ]:
+            current_section = line.strip().replace('...', '').strip()
+            continue
             
-            # Keep lines with option codes
-            if 'OP' in line:
-                full_text.append(line)
+        # Extract data from regular content lines
+        parts = re.split(r'\s{2,}', line.strip())
+        
+        if len(parts) >= 2:  # Must have at least feature and option
+            feature = parts[0].strip()
+            
+            # Skip if feature is just a number or page indicator
+            if feature.isdigit() or "Page" in feature:
                 continue
                 
-            # Keep lines with specific keywords
-            if any(keyword in line.upper() for keyword in [
-                'MODEL', 'TYPE', 'SIZE', 'CONSTRUCTION', 'ROOF', 'FEATURE',
-                'OPTION', 'DESCRIPTION', 'QUANTITY', 'CABINET', 'WINDOW',
-                'DOOR', 'FLOOR', 'PAINT', 'TRIM', 'BATHROOM', 'KITCHEN',
-                'ELECTRICAL', 'PLUMBING', 'APPLIANCE'
-            ]):
-                full_text.append(line)
-                continue
-                
-            # Keep lines with measurements
-            if re.search(r'\d+["\']|\d+x\d+|\d+\s*(?:feet|ft|inch|in)', line, re.IGNORECASE):
-                full_text.append(line)
-                continue
-                
-            # Keep lines with key-value pairs
-            if ':' in line:
-                full_text.append(line)
-                continue
-                
-            # Keep lines with standard measurements
-            if re.search(r'\d+\'.*\d+\"|\d+\s*(?:SF|LF|EA)|\$\s*\d+', line):
-                full_text.append(line)
-                continue
-                
-            # Keep lines with color specifications
-            if any(color in line.lower() for color in ['white', 'black', 'brown', 'grey', 'gray', 'beige', 'nickel', 'steel']):
-                full_text.append(line)
-                continue
-                
-            # Keep lines with pricing information
-            if re.search(r'\$|\bEA\b|\bSTANDARD\b|\bUPGRADE\b', line):
-                full_text.append(line)
-                continue
-                
-            # Keep lines with specification details
-            if len(line.split()) >= 3:  # Line has substantial content
-                full_text.append(line)
-
-    # Remove duplicate lines while preserving order
-    seen = set()
-    unique_text = []
-    for line in full_text:
-        if line not in seen:
-            seen.add(line)
-            unique_text.append(line)
+            data = {
+                'Section': current_section,
+                'Feature': feature,
+                'Option': '',
+                'Variant': '',
+                'Description': '',
+                'Quantity': '',
+                'Price': ''
+            }
+            
+            # Extract option code if present
+            if option_match:
+                data['Option'] = option_match.group(1)
+                line = line.replace(option_match.group(1), '')
+            
+            # Try to extract variant, description, quantity and price
+            remaining_parts = line.split()
+            
+            # Look for quantity patterns (e.g., "1 EA", "1LF", "143 LF")
+            quantity_match = re.search(r'(\d+\s*(?:EA|LF|SF))', line)
+            if quantity_match:
+                data['Quantity'] = quantity_match.group(1)
+            
+            # Look for price patterns (Standard, or dollar amounts)
+            price_match = re.search(r'(Standard|\d+\.\d{2})', line)
+            if price_match:
+                data['Price'] = price_match.group(1)
+            
+            # Extract variant if present (usually between option and description)
+            variant_candidates = [p for p in remaining_parts if p in ['Nickel', 'White', 'Brown', 'Matte']]
+            if variant_candidates:
+                data['Variant'] = variant_candidates[0]
+            
+            # Everything else goes into description
+            description_parts = []
+            for part in remaining_parts:
+                if part not in [data['Option'], data['Variant'], data['Quantity'], data['Price']]:
+                    description_parts.append(part)
+            
+            data['Description'] = ' '.join(description_parts).strip()
+            
+            if data['Feature'] and (data['Option'] or data['Description']):
+                structured_data.append(data)
     
-    return '\n'.join(unique_text)
-
-def normalize_text(text):
-    """Enhanced text normalization"""
-    if text is None:
-        return ""
-    # Remove special characters but keep spaces and numbers
-    text = re.sub(r'[^\w\s\d]', ' ', text.lower())
-    # Replace multiple spaces with single space
-    text = ' '.join(text.split())
-    return text
-
-def enhanced_fuzzy_match(text1, text2, threshold=75):
-    """Enhanced fuzzy matching"""
-    if not text1 or not text2:
-        return False
-    
-    # Normalize texts
-    norm_text1 = normalize_text(str(text1))
-    norm_text2 = normalize_text(str(text2))
-    
-    # Handle option codes specially
-    if 'op' in norm_text1.lower() and 'op' in norm_text2.lower():
-        op_score = fuzz.partial_ratio(norm_text1, norm_text2)
-        if op_score >= 90:  # Higher threshold for option codes
-            return True
-    
-    # Calculate different fuzzy ratios
-    ratio = fuzz.ratio(norm_text1, norm_text2)
-    partial_ratio = fuzz.partial_ratio(norm_text1, norm_text2)
-    token_sort_ratio = fuzz.token_sort_ratio(norm_text1, norm_text2)
-    token_set_ratio = fuzz.token_set_ratio(norm_text1, norm_text2)
-    
-    # Weighted average of different metrics
-    weighted_score = (
-        ratio * 0.25 + 
-        partial_ratio * 0.35 + 
-        token_sort_ratio * 0.2 +
-        token_set_ratio * 0.2
-    )
-    
-    return weighted_score >= threshold
+    return structured_data
 
 def compare_pdfs(villa_text, factory_text):
-    """Enhanced PDF comparison"""
-    # Split texts into lines
-    villa_lines = villa_text.split('\n')
-    factory_lines = factory_text.split('\n')
+    """Compare PDF contents with focus on specified columns"""
+    factory_data = extract_structured_data(factory_text)
     
-    comparison_results = []
-    processed_factory_lines = set()
+    # Convert to DataFrame for easier handling
+    df = pd.DataFrame(factory_data)
     
-    # Process Villa PDF lines
-    for villa_line in villa_lines:
-        villa_line = villa_line.strip()
-        if not villa_line:
-            continue
-            
-        if ':' in villa_line:
-            option, value = villa_line.split(':', 1)
-        else:
-            option = "Specification"
-            value = villa_line
-            
-        option = option.strip()
-        value = value.strip()
-        
-        if not value:
-            continue
-        
-        # Find best match in factory text
-        best_match = None
-        best_score = 0
-        best_line = None
-        
-        for factory_line in factory_lines:
-            factory_line = factory_line.strip()
-            if not factory_line or factory_line in processed_factory_lines:
-                continue
-            
-            # Special handling for option codes
-            if "OP" in factory_line and "OP" in value:
-                op_score = fuzz.partial_ratio(value, factory_line)
-                if op_score > best_score:
-                    best_score = op_score
-                    best_match = factory_line
-                    best_line = factory_line
-            else:
-                # Regular content matching
-                score = fuzz.token_set_ratio(value, factory_line)
-                if score > best_score:
-                    best_score = score
-                    best_match = factory_line
-                    best_line = factory_line
-        
-        if best_match and best_score > 45:  # Minimum threshold for considering a match
-            processed_factory_lines.add(best_line)
-            is_match = enhanced_fuzzy_match(value, best_match)
-            comparison_results.append({
-                "Villa Option": option,
-                "Villa Value": value,
-                "Factory Value": best_match,
-                "Match": "✔️" if is_match else "❌",
-                "Confidence": f"{best_score}%"
-            })
+    # Clean up the data
+    df = df.replace('', None)
+    df = df.dropna(how='all', subset=['Option', 'Description'])
     
-    return comparison_results
+    return df
 
 # Streamlit UI
 st.set_page_config(page_title="PDF Specification Comparison", layout="wide")
 
 st.title("PDF Specification Comparison Tool")
 
-st.markdown("""
-### Instructions:
-1. Upload your Villa PDF specification
-2. Upload your Factory PDF specification
-3. Click 'Compare PDFs' to see the results
-4. Download the comparison results as Excel
-""")
-
 # File uploaders
-col1, col2 = st.columns(2)
-with col1:
-    villa_file = st.file_uploader("Upload Villa PDF", type=['pdf'])
-with col2:
-    factory_file = st.file_uploader("Upload Factory PDF", type=['pdf'])
+villa_file = st.file_uploader("Upload Villa PDF", type=['pdf'])
+factory_file = st.file_uploader("Upload Factory PDF", type=['pdf'])
 
 if villa_file and factory_file:
-    if st.button("Compare PDFs", type="primary"):
-        with st.spinner("Comparing PDFs..."):
-            try:
-                # Extract text from PDFs
-                villa_text = extract_text_from_pdf(villa_file)
-                factory_text = extract_text_from_pdf(factory_file)
-                
-                # Debug view
-                with st.expander("Show Extracted Text (Debug)"):
-                    st.subheader("Villa PDF Text")
-                    st.text(villa_text)
-                    st.subheader("Factory PDF Text")
-                    st.text(factory_text)
-                    
-                    # Show line counts
-                    st.subheader("Line Counts")
-                    st.text(f"Villa PDF: {len(villa_text.split('\n'))} lines")
-                    st.text(f"Factory PDF: {len(factory_text.split('\n'))} lines")
-                
-                # Compare PDFs
-                results = compare_pdfs(villa_text, factory_text)
-                
-                # Display results
-                df = pd.DataFrame(results)
-                st.dataframe(df, use_container_width=True)
-                
-                # Add summary statistics
-                st.subheader("Comparison Summary")
-                total_comparisons = len(results)
-                matches = sum(1 for r in results if r['Match'] == "✔️")
-                st.write(f"Total Comparisons: {total_comparisons}")
-                st.write(f"Matches Found: {matches}")
-                st.write(f"Match Rate: {(matches/total_comparisons*100):.1f}%")
-                
-                # Create download button for Excel file
-                output = BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df.to_excel(writer, index=False)
-                
-                st.download_button(
-                    label="Download Results as Excel",
-                    data=output.getvalue(),
-                    file_name="comparison_results.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-                
-            except Exception as e:
-                st.error(f"An error occurred: {str(e)}")
-                st.error("Full error details:", exc_info=True)
-else:
-    st.info("Please upload both PDF files to start comparison")
+    if st.button("Extract Specifications", type="primary"):
+        try:
+            # Extract text from PDFs
+            factory_text = PdfReader(factory_file).pages
+            factory_text = '\n'.join([page.extract_text() for page in factory_text])
+            
+            # Process and display results
+            results_df = compare_pdfs(None, factory_text)  # Currently only processing factory PDF
+            
+            # Display results with better formatting
+            st.dataframe(
+                results_df,
+                column_config={
+                    "Section": st.column_config.TextColumn("Section", width=100),
+                    "Feature": st.column_config.TextColumn("Feature", width=150),
+                    "Option": st.column_config.TextColumn("Option", width=100),
+                    "Variant": st.column_config.TextColumn("Variant", width=100),
+                    "Description": st.column_config.TextColumn("Description", width=300),
+                    "Quantity": st.column_config.TextColumn("Quantity", width=80),
+                    "Price": st.column_config.TextColumn("Price", width=100),
+                },
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            # Add download button
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                results_df.to_excel(writer, index=False)
+            
+            st.download_button(
+                label="Download as Excel",
+                data=output.getvalue(),
+                file_name="factory_specifications.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
+            # Display some statistics
+            st.subheader("Summary")
+            st.write(f"Total Items: {len(results_df)}")
+            st.write(f"Sections Found: {len(results_df['Section'].unique())}")
+            st.write(f"Options with Pricing: {len(results_df[results_df['Price'].notna()])}")
+            
+        except Exception as e:
+            st.error(f"An error occurred: {str(e)}")
+            st.error("Full error details:", exc_info=True)
 
-# Add footer with version info
+else:
+    st.info("Please upload the PDF files to begin extraction")
+
+# Add footer
 st.markdown("---")
-st.markdown("v1.2 - Enhanced PDF Specification Comparison Tool")
+st.markdown("v2.0 - Specification Extraction Tool")
