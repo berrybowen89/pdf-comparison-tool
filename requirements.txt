@@ -2,3 +2,6 @@ streamlit
 anthropic
 pypdf
 python-docx
+pdfplumber
+PyMuPDF
+pandas
