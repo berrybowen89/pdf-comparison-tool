@@ -34,37 +34,59 @@ if 'comparison_results' not in st.session_state:
     st.session_state.comparison_results = None
 
 def enhanced_pdf_extraction(file) -> Dict[str, any]:
-    """Improved PDF text extraction combining multiple methods."""
+    """Improved PDF text extraction with fallback handling."""
     text_pdfplumber = extract_pdf_text_pdfplumber(file)
     text_pymupdf = extract_pdf_text_pymupdf(file)
     
-    combined_text = []
-    with pdfplumber.open(file) as pdf:
-        for page in pdf.pages:
-            words = page.extract_words(x_tolerance=3, y_tolerance=3)
-            for word in words:
-                combined_text.append({
-                    'text': word['text'],
-                    'x0': word['x0'],
-                    'y0': word['y0'],
-                    'line_number': int(word['y0'] / 10)
-                })
-    
-    lines = {}
-    for word in combined_text:
-        line_num = word['line_number']
-        if line_num not in lines:
-            lines[line_num] = []
-        lines[line_num].append(word['text'])
-    
-    formatted_text = '\n'.join([' '.join(line) for line in lines.values()])
-    
-    return {
-        'text': formatted_text,
-        'pdfplumber_text': text_pdfplumber,
-        'pymupdf_text': text_pymupdf,
-        'word_positions': combined_text
-    }
+    try:
+        combined_text = []
+        with pdfplumber.open(file) as pdf:
+            for page in pdf.pages:
+                words = page.extract_words(x_tolerance=3, y_tolerance=3)
+                for word in words:
+                    if 'y0' in word and 'x0' in word:
+                        combined_text.append({
+                            'text': word['text'],
+                            'x0': word.get('x0', 0),
+                            'y0': word.get('y0', 0),
+                            'line_number': int(word.get('y0', 0) / 10)
+                        })
+                    else:
+                        # Fallback: add word without position data
+                        combined_text.append({
+                            'text': word.get('text', ''),
+                            'x0': 0,
+                            'y0': 0,
+                            'line_number': 0
+                        })
+        
+        # Sort by line number and x position
+        combined_text.sort(key=lambda x: (x['line_number'], x['x0']))
+        
+        # Group into lines
+        lines = {}
+        for word in combined_text:
+            line_num = word['line_number']
+            if line_num not in lines:
+                lines[line_num] = []
+            lines[line_num].append(word['text'])
+        
+        formatted_text = '\n'.join([' '.join(line) for line in lines.values()])
+        
+        return {
+            'text': formatted_text if formatted_text.strip() else text_pdfplumber,
+            'pdfplumber_text': text_pdfplumber,
+            'pymupdf_text': text_pymupdf,
+            'word_positions': combined_text
+        }
+    except Exception as e:
+        # Fallback to basic extraction
+        return {
+            'text': text_pdfplumber,
+            'pdfplumber_text': text_pdfplumber,
+            'pymupdf_text': text_pymupdf,
+            'word_positions': []
+        }
 
 def extract_pdf_text_pdfplumber(file) -> str:
     """Extract text from PDF using pdfplumber with enhanced formatting."""
