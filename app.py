@@ -1,10 +1,10 @@
+@@ -0,0 +1,133 @@
 import streamlit as st
 import pandas as pd
 from PyPDF2 import PdfReader
 from rapidfuzz import fuzz
 import numpy as np
 from io import BytesIO
-
 def extract_text_from_pdf(pdf_file):
     """Extract text from uploaded PDF file"""
     pdf_reader = PdfReader(pdf_file)
@@ -12,13 +12,11 @@ def extract_text_from_pdf(pdf_file):
     for page in pdf_reader.pages:
         text += page.extract_text()
     return text
-
 def normalize_text(text):
     """Basic text normalization"""
     if text is None:
         return ""
     return " ".join(text.lower().split())
-
 def enhanced_fuzzy_match(text1, text2, threshold=80):
     """Enhanced fuzzy matching with multiple metrics"""
     if not text1 or not text2:
@@ -37,7 +35,6 @@ def enhanced_fuzzy_match(text1, text2, threshold=80):
     weighted_score = (ratio * 0.4 + partial_ratio * 0.4 + token_sort_ratio * 0.2)
     
     return weighted_score >= threshold
-
 def compare_pdfs(villa_text, factory_text):
     """Compare the contents of both PDFs"""
     # Split texts into lines
@@ -75,12 +72,9 @@ def compare_pdfs(villa_text, factory_text):
                 })
     
     return comparison_results
-
 # Streamlit UI
 st.set_page_config(page_title="PDF Specification Comparison", layout="wide")
-
 st.title("PDF Specification Comparison Tool")
-
 st.markdown("""
 ### Instructions:
 1. Upload your Villa PDF specification
@@ -88,14 +82,12 @@ st.markdown("""
 3. Click 'Compare PDFs' to see the results
 4. Download the comparison results as Excel
 """)
-
 # File uploaders
 col1, col2 = st.columns(2)
 with col1:
     villa_file = st.file_uploader("Upload Villa PDF", type=['pdf'])
 with col2:
     factory_file = st.file_uploader("Upload Factory PDF", type=['pdf'])
-
 if villa_file and factory_file:
     if st.button("Compare PDFs", type="primary"):
         with st.spinner("Comparing PDFs..."):
@@ -127,7 +119,6 @@ if villa_file and factory_file:
                 st.error(f"An error occurred: {str(e)}")
 else:
     st.info("Please upload both PDF files to start comparison")
-
 # Add footer with version info
 st.markdown("---")
 st.markdown("v1.0 - PDF Specification Comparison Tool")
