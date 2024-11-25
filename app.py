@@ -158,4 +158,69 @@ def compare_pdfs(factory_text):
     
     return df
 
-# [Rest of the Streamlit UI code remains the same]
+# Streamlit UI
+st.set_page_config(page_title="PDF Specification Extraction", layout="wide")
+
+st.title("PDF Specification Extraction Tool")
+
+# File uploader
+uploaded_file = st.file_uploader("Upload Factory PDF", type=['pdf'])
+
+if uploaded_file is not None:
+    if st.button("Process PDF", type="primary"):
+        try:
+            # Read PDF content
+            pdf_reader = PdfReader(uploaded_file)
+            text_content = ""
+            for page in pdf_reader.pages:
+                text_content += page.extract_text() + "\n"
+            
+            # Process the text content
+            results_df = compare_pdfs(text_content)
+            
+            # Display the results in a table
+            st.dataframe(
+                results_df,
+                column_config={
+                    "Section": st.column_config.TextColumn("Section", width=120),
+                    "Feature": st.column_config.TextColumn("Feature", width=150),
+                    "Option": st.column_config.TextColumn("Option", width=100),
+                    "Variant": st.column_config.TextColumn("Variant", width=100),
+                    "Description": st.column_config.TextColumn("Description", width=300),
+                    "Quantity": st.column_config.TextColumn("Quantity", width=80),
+                    "Price": st.column_config.TextColumn("Price", width=100),
+                },
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            # Add download button
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                results_df.to_excel(writer, index=False)
+            
+            st.download_button(
+                label="Download Excel File",
+                data=output.getvalue(),
+                file_name="extracted_specifications.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
+            # Display statistics
+            st.subheader("Summary")
+            st.write(f"Total Items: {len(results_df)}")
+            st.write(f"Sections Found: {len(results_df['Section'].unique())}")
+            st.write(f"Options with Pricing: {len(results_df[results_df['Price'] != ''])}")
+            
+            # Display sections found
+            st.subheader("Sections Found")
+            st.write(", ".join(sorted(results_df['Section'].unique())))
+            
+        except Exception as e:
+            st.error(f"An error occurred while processing the PDF: {str(e)}")
+else:
+    st.info("Please upload a PDF file to begin")
+
+# Add footer with version
+st.markdown("---")
+st.markdown("v2.2 - PDF Specification Extraction Tool")
