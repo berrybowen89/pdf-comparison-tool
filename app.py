@@ -116,7 +116,7 @@ def extract_tables_from_text(text: str) -> List[List[str]]:
     current_table = []
     
     lines = text.split('\n')
-    for line in lin
+    for line in line
         if '\t' in line or '  ' in line:
             cells = re.split(r'\t|  +', line.strip())
             current_table.append(cells)
