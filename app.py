@@ -112,11 +112,12 @@ def clean_text(text: str) -> str:
     return text
 
 def extract_tables_from_text(text: str) -> List[List[str]]:
+    """Attempt to identify and extract tabular data from text."""
     tables = []
     current_table = []
     
     lines = text.split('\n')
-    for line in line
+    for line in lines:  # Fixed the incomplete 'for' statement
         if '\t' in line or '  ' in line:
             cells = re.split(r'\t|  +', line.strip())
             current_table.append(cells)
