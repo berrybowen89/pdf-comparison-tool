@@ -99,8 +99,14 @@ def extract_pdf_text_pdfplumber(file):
         return ""
 
 def clean_text(text: str) -> str:
+    """Enhanced text cleaning function."""
+    if not text:
+        return ""
+    # Remove non-printable characters
+    text = ''.join(char for char in text if char.isprintable() or char in ['\n', '\t', '\r'])
+    # Normalize whitespace
     text = re.sub(r'\s+', ' ', text)
-    text = re.sub(r'[^\w\s.,;:$%()-]', '', text)
+    # Clean up line breaks
     text = text.replace('\r', '\n')
     text = '\n'.join(line.strip() for line in text.split('\n') if line.strip())
     return text
@@ -110,7 +116,7 @@ def extract_tables_from_text(text: str) -> List[List[str]]:
     current_table = []
     
     lines = text.split('\n')
-    for line in lines:
+    for line in lin
         if '\t' in line or '  ' in line:
             cells = re.split(r'\t|  +', line.strip())
             current_table.append(cells)
@@ -125,7 +131,7 @@ def extract_tables_from_text(text: str) -> List[List[str]]:
     return tables
 
 def read_file(file) -> Dict[str, str]:
-    """Cloud-compatible file reading function."""
+    """Cloud-compatible file reading function with improved encoding handling."""
     try:
         if file.type == "application/pdf":
             text = extract_pdf_text_pdfplumber(file)
@@ -135,24 +141,34 @@ def read_file(file) -> Dict[str, str]:
                 'raw_text': text
             }
         elif file.type in ["application/oxps", "application/vnd.ms-xpsdocument"]:
-            # For OXPS files, extract readable text content directly
+            # Try multiple methods to extract readable text
+            content = file.getvalue()
+            
+            # Method 1: Direct XML parsing
             try:
-                # Try reading as UTF-8
-                content = file.getvalue()
-                text = ""
-                # Look for text content between XML tags
-                matches = re.findall(b'<text.*?>(.*?)</text>', content, re.DOTALL)
-                if matches:
-                    text = ' '.join(m.decode('utf-8', errors='ignore') for m in matches)
+                from xml.etree import ElementTree as ET
+                root = ET.fromstring(content)
+                text_elements = root.findall(".//text")
+                if text_elements:
+                    text = ' '.join(elem.text for elem in text_elements if elem.text)
                 else:
-                    # Fallback to basic text extraction
+                    raise ValueError("No text elements found")
+            except:
+                # Method 2: Binary content cleaning
+                try:
+                    # Remove binary characters and convert to string
+                    text = ''.join(chr(c) for c in content if 32 <= c <= 126 or c in [9, 10, 13])
+                    # Clean up excessive whitespace
+                    text = re.sub(r'\s+', ' ', text).strip()
+                except:
+                    # Method 3: Force decode with error handling
                     text = content.decode('utf-8', errors='ignore')
-            except Exception as e:
-                st.warning(f"Limited OXPS support in cloud environment. Some content may be missing.")
-                text = ""
+            
+            # Clean up the extracted text
+            text = clean_text(text)
             
             return {
-                'text': clean_text(text),
+                'text': text,
                 'tables': extract_tables_from_text(text),
                 'raw_text': text
             }
@@ -166,9 +182,10 @@ def read_file(file) -> Dict[str, str]:
                 'raw_text': text
             }
         else:
-            # Try multiple encodings for text files
-            text = ""
-            encodings = ['utf-8', 'latin-1', 'utf-16']
+            # For text files, try multiple encodings
+            encodings = ['utf-8', 'utf-16', 'latin-1', 'cp1252', 'ascii']
+            text = None
+            
             for encoding in encodings:
                 try:
                     text = file.getvalue().decode(encoding)
@@ -176,7 +193,8 @@ def read_file(file) -> Dict[str, str]:
                 except UnicodeDecodeError:
                     continue
             
-            if not text:
+            if text is None:
+                # Last resort: force decode with ignore
                 text = file.getvalue().decode('utf-8', errors='ignore')
             
             return {
@@ -187,7 +205,7 @@ def read_file(file) -> Dict[str, str]:
     except Exception as e:
         st.error(f"Error reading file {file.name}: {str(e)}")
         return {'text': '', 'tables': [], 'raw_text': ''}
-
+        
 def extract_variables_from_villa_text(text, variables):
     extracted = {}
     for variable in variables:
