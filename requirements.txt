@@ -1,9 +1,8 @@
 streamlit
 anthropic
-pypdf2
+PyPDF2
 python-docx
 pandas
 rapidfuzz
 pdfplumber
-pymupdf
-oxps2pdf
+PyMuPDF
