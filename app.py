@@ -107,55 +107,7 @@ def extract_text_from_oxps(file):
     except Exception as e:
         st.error(f"Error converting OXPS file: {str(e)}")
         return ""
-
-def read_file(file) -> Dict[str, str]:
-    """Enhanced file reading with OXPS support."""
-    try:
-        if file.type == "application/pdf":
-            extracted_data = enhanced_pdf_extraction(file)
-            return {
-                'text': extracted_data['text'],
-                'tables': extract_tables_from_text(extracted_data['text']),
-                'raw_text': extracted_data['pdfplumber_text']
-            }
-        elif file.type == "application/oxps":
-            text = extract_text_from_oxps(file)
-            return {
-                'text': clean_text(text),
-                'tables': extract_tables_from_text(text),
-                'raw_text': text
-            }
-        elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-            doc = docx.Document(file)
-            text = '\n'.join(paragraph.text for paragraph in doc.paragraphs)
-            tables = [[cell.text for cell in row.cells] for table in doc.tables for row in table.rows]
-            return {
-                'text': clean_text(text),
-                'tables': tables,
-                'raw_text': text
-            }
-        else:
-            text = file.getvalue().decode('utf-8')
-            return {
-                'text': clean_text(text),
-                'tables': extract_tables_from_text(text),
-                'raw_text': text
-            }
-    except Exception as e:
-        st.error(f"Error reading file {file.name}: {str(e)}")
-        return {'text': '', 'tables': [], 'raw_text': ''}
-
-# Update the file uploader to accept OXPS files
-with col1:
-    st.subheader("Quote 1")
-    quote1_file = st.file_uploader(
-        "Upload first quote",
-        type=['pdf', 'docx', 'txt', 'oxps'],
-        key="quote1_uploader"
-    )
-    # Rest of the code remains the same
-
-with col2:
+        
     st.subheader("Quote 2")
     quote2_file = st.file_uploader(
         "Upload second quote",
