@@ -141,34 +141,18 @@ def read_file(file) -> Dict[str, str]:
                 'raw_text': text
             }
         elif file.type in ["application/oxps", "application/vnd.ms-xpsdocument"]:
-            # Try multiple methods to extract readable text
             content = file.getvalue()
-            
-            # Method 1: Direct XML parsing
             try:
-                from xml.etree import ElementTree as ET
-                root = ET.fromstring(content)
-                text_elements = root.findall(".//text")
-                if text_elements:
-                    text = ' '.join(elem.text for elem in text_elements if elem.text)
-                else:
-                    raise ValueError("No text elements found")
-            except:
-                # Method 2: Binary content cleaning
-                try:
-                    # Remove binary characters and convert to string
-                    text = ''.join(chr(c) for c in content if 32 <= c <= 126 or c in [9, 10, 13])
-                    # Clean up excessive whitespace
-                    text = re.sub(r'\s+', ' ', text).strip()
-                except:
-                    # Method 3: Force decode with error handling
-                    text = content.decode('utf-8', errors='ignore')
-            
-            # Clean up the extracted text
-            text = clean_text(text)
+                # Try reading as bytes and decode
+                text = content.decode('utf-8', errors='ignore')
+                # Remove non-printable characters except newlines
+                text = ''.join(char for char in text if char.isprintable() or char in ['\n', '\t'])
+            except Exception as e:
+                st.warning(f"Limited OXPS support. Some content may be missing.")
+                text = ""
             
             return {
-                'text': text,
+                'text': clean_text(text),
                 'tables': extract_tables_from_text(text),
                 'raw_text': text
             }
@@ -182,21 +166,7 @@ def read_file(file) -> Dict[str, str]:
                 'raw_text': text
             }
         else:
-            # For text files, try multiple encodings
-            encodings = ['utf-8', 'utf-16', 'latin-1', 'cp1252', 'ascii']
-            text = None
-            
-            for encoding in encodings:
-                try:
-                    text = file.getvalue().decode(encoding)
-                    break
-                except UnicodeDecodeError:
-                    continue
-            
-            if text is None:
-                # Last resort: force decode with ignore
-                text = file.getvalue().decode('utf-8', errors='ignore')
-            
+            text = file.getvalue().decode('utf-8', errors='ignore')
             return {
                 'text': clean_text(text),
                 'tables': extract_tables_from_text(text),
