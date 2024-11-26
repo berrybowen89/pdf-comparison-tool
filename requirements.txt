@@ -6,3 +6,7 @@ pandas
 rapidfuzz
 pdfplumber
 pymupdf
+pikepdf
+oxps2pdf
+subprocess.run
+tempfile
