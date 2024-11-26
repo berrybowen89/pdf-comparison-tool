@@ -125,7 +125,7 @@ def extract_tables_from_text(text: str) -> List[List[str]]:
     return tables
 
 def read_file(file) -> Dict[str, str]:
-    """Enhanced file reading with OXPS support."""
+    """Cloud-compatible file reading function."""
     try:
         if file.type == "application/pdf":
             text = extract_pdf_text_pdfplumber(file)
@@ -134,8 +134,23 @@ def read_file(file) -> Dict[str, str]:
                 'tables': extract_tables_from_text(text),
                 'raw_text': text
             }
-        elif file.type == "application/oxps":
-            text = extract_text_from_oxps(file)
+        elif file.type in ["application/oxps", "application/vnd.ms-xpsdocument"]:
+            # For OXPS files, extract readable text content directly
+            try:
+                # Try reading as UTF-8
+                content = file.getvalue()
+                text = ""
+                # Look for text content between XML tags
+                matches = re.findall(b'<text.*?>(.*?)</text>', content, re.DOTALL)
+                if matches:
+                    text = ' '.join(m.decode('utf-8', errors='ignore') for m in matches)
+                else:
+                    # Fallback to basic text extraction
+                    text = content.decode('utf-8', errors='ignore')
+            except Exception as e:
+                st.warning(f"Limited OXPS support in cloud environment. Some content may be missing.")
+                text = ""
+            
             return {
                 'text': clean_text(text),
                 'tables': extract_tables_from_text(text),
@@ -151,7 +166,19 @@ def read_file(file) -> Dict[str, str]:
                 'raw_text': text
             }
         else:
-            text = file.getvalue().decode('utf-8')
+            # Try multiple encodings for text files
+            text = ""
+            encodings = ['utf-8', 'latin-1', 'utf-16']
+            for encoding in encodings:
+                try:
+                    text = file.getvalue().decode(encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            
+            if not text:
+                text = file.getvalue().decode('utf-8', errors='ignore')
+            
             return {
                 'text': clean_text(text),
                 'tables': extract_tables_from_text(text),
