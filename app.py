@@ -7,7 +7,6 @@ import pandas as pd
 from difflib import SequenceMatcher
 import pdfplumber
 import re
-import json
 from typing import List, Dict
 import fitz  # PyMuPDF
 
@@ -154,8 +153,7 @@ def read_file(file) -> Dict[str, str]:
     except Exception as e:
         st.error(f"Error reading file {file.name}: {str(e)}")
         return {'text': '', 'tables': [], 'raw_text': ''}
-
-# Create two columns for file uploads
+        # Create two columns for file uploads
 col1, col2 = st.columns(2)
 
 # Modified file upload handling
@@ -221,135 +219,137 @@ with col2:
                     st.markdown(f"**Table {i+1}**")
                     st.dataframe(pd.DataFrame(table))
 
-def compare_quotes(quote1_data, quote2_data):
-    comparison_prompt = f"""
-    Please thoroughly compare the two sales quotes provided below. Analyze both the text and any tables. 
-    Respond with a JSON object containing these keys:
-
-    summary: Key insights and differences between the quotes, in a short paragraph 
-    lineItems: An array of objects, one per line item, each with:
-        - description: Description of the line item
-        - quote1Value: Value from Quote 1 (numeric if possible, else string)
-        - quote2Value: Value from Quote 2 (numeric if possible, else string)
-        - match: Exact, Partial, OnlyQuote1, or OnlyQuote2
-        - difference: Numeric difference if values are numeric, else null
-    tables: Array of insights/differences found in comparing any tables, or [] if no tables
-    onlyQuote1: Array of line item descriptions only in Quote 1, or [] 
-    onlyQuote2: Array of line item descriptions only in Quote 2, or []
-    stats: Object with:
-        - totalItems: Total number of line items compared
-        - exactMatches: Number of exact matches
-        - partialMatches: Number of partial matches
-        - itemsOnlyQuote1: Number of items only in Quote 1
-        - itemsOnlyQuote2: Number of items only in Quote 2
-        - totalDifference: Total numeric difference across all line items
-
-    Quote 1: 
-    {quote1_data}
-
-    Quote 2:
-    {quote2_data}
-    """
-    
-    response = st.session_state.anthropic_client.messages.create(
-        model="claude-3-opus-20240229",
-        max_tokens=4096,
-        messages=[{
-            "role": "user",
-            "content": comparison_prompt
-        }]
-    )
-    
-    return response.content[0].text
-
 # Compare button
 if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.quote2:
-    # Create a progress bar
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    try:
-        # Stage 1: Document Processing
-        status_text.text("Stage 1/4: Processing documents...")
-        progress_bar.progress(25)
-        
-        # Stage 2: Sending to Claude
-        status_text.text("Stage 2/4: Analyzing with Claude...")
-        progress_bar.progress(50)
-        
-        comparison_result = compare_quotes(st.session_state.quote1['content'], st.session_state.quote2['content'])
-        # Print out the raw comparison result for debugging
-        st.write("Raw Comparison Result:")
-        st.write(comparison_result)
+    with st.spinner("Performing detailed line item analysis with Claude 3 Opus..."):
+        try:
+            # Split the analysis into smaller chunks if needed
+            extraction_prompt = f"""
+            You are a technical expert in analyzing and comparing detailed quotes. 
+            I need you to do a thorough line-by-line comparison of these two quotes.
+            
+            IMPORTANT INSTRUCTIONS:
+            1. Analyze EVERY SINGLE LINE ITEM in detail
+            2. Do not summarize or skip any items
+            3. Look for exact and partial matches even if wording is different
+            4. Pay special attention to technical specifications and model numbers
+            5. Identify items that might be the same but described differently
+            
+            Quote 1 ({st.session_state.quote1['name']}):
+            {st.session_state.quote1['content']}
 
-        comparison_json = json.loads(comparison_result)
-        
-        # Stage 3: Processing Results
-        status_text.text("Stage 3/4: Processing results...")
-        progress_bar.progress(75)
-        
-        # Stage 4: Displaying Results
-        status_text.text("Stage 4/4: Generating comparison...")
-        progress_bar.progress(90)
-        
-        # Display results
-        st.markdown("### Comparison Summary")
-        st.info(comparison_json['summary'])
+            Quote 2 ({st.session_state.quote2['name']}):
+            {st.session_state.quote2['content']}
 
-        st.markdown("### Line Item Comparison")
-        line_item_table = pd.DataFrame(comparison_json['lineItems'])
-        styled_table = line_item_table.style.applymap(lambda val: 'background-color: #ffffcc' if pd.notnull(val) else '')
-        st.table(styled_table)
+            Create a DETAILED comparison table with EXACTLY these columns:
+            | Line Item | Quote 1 Description | Quote 2 Description | Match Status | Notes |
 
-        if comparison_json['tables']:
-            st.markdown("### Table Comparison")
-            for insight in comparison_json['tables']:
-                st.markdown(f"- {insight}")
+            Match Status Rules:
+            - ✓ = Exact match (identical specifications)
+            - ~ = Partial match (similar but with differences)
+            - [1] = Only in Quote 1
+            - [2] = Only in Quote 2
 
-        if comparison_json['onlyQuote1']:
-            st.markdown("### Only in Quote 1")
-            st.warning(", ".join(comparison_json['onlyQuote1']))
+            IMPORTANT:
+            - Include EVERY line item from both quotes
+            - Use EXACT descriptions from each quote
+            - Note ANY differences in specifications
+            - If items are similar but not identical, mark as partial match
+            - Be extremely thorough in comparison
+            """
+            
+            # Initial analysis with correct max_tokens
+            initial_response = st.session_state.anthropic_client.messages.create(
+                model="claude-3-opus-20240229",
+                max_tokens=4096,  # Corrected to maximum allowed
+                messages=[{
+                    "role": "user",
+                    "content": extraction_prompt
+                }]
+            )
+            
+            # Create tabs for different views
+            tab1, tab2, tab3 = st.tabs([
+                "Line Item Comparison", 
+                "Detailed Analysis", 
+                "Summary"
+            ])
+            
+            with tab1:
+                st.markdown("### Complete Line Item Comparison")
+                
+                # Enhanced styling for better visibility
+                st.markdown("""
+                <style>
+                .exact-match { color: #00aa00; font-weight: bold; background-color: #f0fff0; }
+                .partial-match { color: #ff6600; font-weight: bold; background-color: #fff6f0; }
+                .unique-item { color: #0066ff; font-weight: bold; background-color: #f0f6ff; }
+                .different { background-color: #fff3f3; }
+                th { background-color: #f0f2f6; }
+                td { min-width: 150px; }
+                </style>
+                """, unsafe_allow_html=True)
+                
+                # Visualization prompt
+                viz_response = st.session_state.anthropic_client.messages.create(
+                    model="claude-3-opus-20240229",
+                    max_tokens=4096,
+                    messages=[
+                        {"role": "assistant", "content": initial_response.content[0].text},
+                        {"role": "user", "content": "Format the above analysis as a clear markdown table showing all items and their comparisons."}
+                    ]
+                )
+                
+                # Display the full comparison table
+                st.markdown(viz_response.content[0].text)
+                
+                # Download options
+                st.download_button(
+                    "Download Full Comparison as CSV",
+                    viz_response.content[0].text,
+                    "detailed_line_item_comparison.csv",
+                    "text/csv"
+                )
+            
+            with tab2:
+                st.markdown("### Detailed Analysis")
+                
+                analysis_response = st.session_state.anthropic_client.messages.create(
+                    model="claude-3-opus-20240229",
+                    max_tokens=4096,
+                    messages=[
+                        {"role": "assistant", "content": initial_response.content[0].text},
+                        {"role": "user", "content": "Provide a detailed analysis of all differences found, including partial matches and unique items."}
+                    ]
+                )
+                
+                st.markdown(analysis_response.content[0].text)
+            
+            with tab3:
+                st.markdown("### Comparison Summary")
+                
+                summary_response = st.session_state.anthropic_client.messages.create(
+                    model="claude-3-opus-20240229",
+                    max_tokens=4096,
+                    messages=[
+                        {"role": "assistant", "content": initial_response.content[0].text},
+                        {"role": "user", "content": "Provide a statistical summary of the comparison, including counts of exact matches, partial matches, and unique items."}
+                    ]
+                )
+                
+                st.markdown(summary_response.content[0].text)
+                
+                # Metrics display
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total Items", "Calculated")
+                with col2:
+                    st.metric("Exact Matches", "Calculated")
+                with col3:
+                    st.metric("Partial Matches", "Calculated")
+                with col4:
+                    st.metric("Unique Items", "Calculated")
 
-        if comparison_json['onlyQuote2']:  
-            st.markdown("### Only in Quote 2")
-            st.warning(", ".join(comparison_json['onlyQuote2']))
-
-        st.markdown("### Comparison Statistics")  
-        stats_df = pd.DataFrame.from_dict(comparison_json['stats'], orient='index', columns=['Value'])
-        st.table(stats_df)
-        
-        # Add download button
-        st.download_button(
-            "Download Comparison",
-            comparison_result,
-            "comparison.json",
-            "application/json"
-        )
-        
-        # Complete the progress bar
-        progress_bar.progress(100)
-        status_text.text("Analysis complete! ✅")
-        
-        # Add timestamp
-        st.markdown(f"*Analysis completed at {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}*")
-
-    except Exception as e:
-        progress_bar.empty()
-        status_text.empty()
-        st.error(f"Error in comparison: {str(e)}")
-
-# Footer
-st.markdown("---")
-st.markdown("""
-    **Legend:**
-    - Exact: Line items are an exact match 
-    - Partial: Line items are a partial match
-    - OnlyQuote1: Line item is only in Quote 1
-    - OnlyQuote2: Line item is only in Quote 2
-""")
-
-# Add a clear button at the bottom
-if st.button("Clear and Start Over"):
-    st.session_state.quote1 = None
-    st.session_state.quote2 = None
-    st.rerun()
+        except Exception as e:
+            st.error(f"Error in comparison: {str(e)}")
+            st.error("Full error details:", str(e))
