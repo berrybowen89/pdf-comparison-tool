@@ -223,27 +223,32 @@ with col2:
 
 def compare_quotes(quote1_data, quote2_data):
     comparison_prompt = f"""
-    Thoroughly compare the attached sales quotes, analyzing both text and tables. Generate a structured JSON response with these sections:
+    Please thoroughly compare the two sales quotes provided below. Analyze both the text and any tables. 
+    Respond with a JSON object containing these keys:
 
-    1. Summary: Key insights and differences between the quotes
-    2. LineItemComparison: Markdown table comparing each line item 
-       Columns: 
-       - LineItem: Description of item
-       - Quote1Value: Value from Quote 1 (numeric where applicable)  
-       - Quote2Value: Value from Quote 2 (numeric where applicable)
-       - MatchStatus: Exact match (✓), Partial match (~), Only in Quote 1 ([1]), Only in Quote 2 ([2])
-       - Difference: Difference between Quote1Value and Quote2Value (blank if n/a)
-    3. TableComparison: Insights from comparing any tables
-    4. UniqueItems: List items unique to each quote
-    5. Statistics:
-       - TotalItems: Total line items compared
-       - ExactMatches: Number of exact matches  
-       - PartialMatches: Number of partial or fuzzy matches
-       - ItemsOnlyQuote1: Number of items only in Quote 1
-       - ItemsOnlyQuote2: Number of items only in Quote 2
+    summary: Key insights and differences between the quotes, in a short paragraph 
+    lineItems: An array of objects, one per line item, each with:
+        - description: Description of the line item
+        - quote1Value: Value from Quote 1 (numeric if possible, else string)
+        - quote2Value: Value from Quote 2 (numeric if possible, else string)
+        - match: Exact, Partial, OnlyQuote1, or OnlyQuote2
+        - difference: Numeric difference if values are numeric, else null
+    tables: Array of insights/differences found in comparing any tables, or [] if no tables
+    onlyQuote1: Array of line item descriptions only in Quote 1, or [] 
+    onlyQuote2: Array of line item descriptions only in Quote 2, or []
+    stats: Object with:
+        - totalItems: Total number of line items compared
+        - exactMatches: Number of exact matches
+        - partialMatches: Number of partial matches
+        - itemsOnlyQuote1: Number of items only in Quote 1
+        - itemsOnlyQuote2: Number of items only in Quote 2
+        - totalDifference: Total numeric difference across all line items
 
-    Quote 1: {quote1_data}
-    Quote 2: {quote2_data}
+    Quote 1: 
+    {quote1_data}
+
+    Quote 2:
+    {quote2_data}
     """
     
     response = st.session_state.anthropic_client.messages.create(
@@ -273,6 +278,10 @@ if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.
         progress_bar.progress(50)
         
         comparison_result = compare_quotes(st.session_state.quote1['content'], st.session_state.quote2['content'])
+        # Print out the raw comparison result for debugging
+        st.write("Raw Comparison Result:")
+        st.write(comparison_result)
+
         comparison_json = json.loads(comparison_result)
         
         # Stage 3: Processing Results
@@ -285,20 +294,24 @@ if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.
         
         # Display results
         st.markdown("### Comparison Summary")
-        st.markdown(comparison_json['Summary'])
+        st.markdown(comparison_json['summary'])
         
         st.markdown("### Line Item Comparison")
-        st.markdown(comparison_json['LineItemComparison'])
+        line_item_table = pd.DataFrame(comparison_json['lineItems'])
+        st.table(line_item_table)
         
-        if comparison_json['TableComparison']:
+        if comparison_json['tables']:
             st.markdown("### Table Comparison")
-            st.markdown(comparison_json['TableComparison'])
+            st.json(comparison_json['tables'])
         
-        st.markdown("### Unique Items")
-        st.markdown(comparison_json['UniqueItems'])
+        st.markdown("### Only in Quote 1")
+        st.json(comparison_json['onlyQuote1'])
+
+        st.markdown("### Only in Quote 2")  
+        st.json(comparison_json['onlyQuote2'])
         
         st.markdown("### Comparison Statistics")
-        st.json(comparison_json['Statistics'])
+        st.json(comparison_json['stats'])
         
         # Add download button
         st.download_button(
@@ -324,10 +337,10 @@ if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.
 st.markdown("---")
 st.markdown("""
     **Legend:**
-    - ✓ : Exact match
-    - ~ : Partial match
-    - [1] : Only in Quote 1
-    - [2] : Only in Quote 2
+    - Exact: Line items are an exact match 
+    - Partial: Line items are a partial match
+    - OnlyQuote1: Line item is only in Quote 1
+    - OnlyQuote2: Line item is only in Quote 2
 """)
 
 # Add a clear button at the bottom
