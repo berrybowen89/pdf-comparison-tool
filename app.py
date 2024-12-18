@@ -294,24 +294,29 @@ if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.
         
         # Display results
         st.markdown("### Comparison Summary")
-        st.markdown(comparison_json['summary'])
-        
+        st.info(comparison_json['summary'])
+
         st.markdown("### Line Item Comparison")
         line_item_table = pd.DataFrame(comparison_json['lineItems'])
-        st.table(line_item_table)
-        
+        styled_table = line_item_table.style.applymap(lambda val: 'background-color: #ffffcc' if pd.notnull(val) else '')
+        st.table(styled_table)
+
         if comparison_json['tables']:
             st.markdown("### Table Comparison")
-            st.json(comparison_json['tables'])
-        
-        st.markdown("### Only in Quote 1")
-        st.json(comparison_json['onlyQuote1'])
+            for insight in comparison_json['tables']:
+                st.markdown(f"- {insight}")
 
-        st.markdown("### Only in Quote 2")  
-        st.json(comparison_json['onlyQuote2'])
-        
-        st.markdown("### Comparison Statistics")
-        st.json(comparison_json['stats'])
+        if comparison_json['onlyQuote1']:
+            st.markdown("### Only in Quote 1")
+            st.warning(", ".join(comparison_json['onlyQuote1']))
+
+        if comparison_json['onlyQuote2']:  
+            st.markdown("### Only in Quote 2")
+            st.warning(", ".join(comparison_json['onlyQuote2']))
+
+        st.markdown("### Comparison Statistics")  
+        stats_df = pd.DataFrame.from_dict(comparison_json['stats'], orient='index', columns=['Value'])
+        st.table(stats_df)
         
         # Add download button
         st.download_button(
