@@ -41,13 +41,16 @@ def extract_pdf_text_pdfplumber(file) -> str:
         with pdfplumber.open(file) as pdf:
             pages_text = []
             for page in pdf.pages:
+                # Extract text with better handling of tables and layouts
                 text = page.extract_text(x_tolerance=3, y_tolerance=3)
+                # Extract tables and format them properly
                 tables = page.extract_tables()
                 formatted_tables = []
                 for table in tables:
                     formatted_table = '\n'.join(['\t'.join([str(cell) if cell else '' for cell in row]) for row in table])
                     formatted_tables.append(formatted_table)
                 
+                # Combine regular text and tables
                 page_text = text + '\n' + '\n'.join(formatted_tables)
                 pages_text.append(page_text)
             
@@ -151,7 +154,7 @@ def read_file(file) -> Dict[str, str]:
     except Exception as e:
         st.error(f"Error reading file {file.name}: {str(e)}")
         return {'text': '', 'tables': [], 'raw_text': ''}
-        
+
 # Create two columns for file uploads
 col1, col2 = st.columns(2)
 
