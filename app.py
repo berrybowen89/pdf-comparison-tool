@@ -1,18 +1,22 @@
-```python
 import streamlit as st
-from streamlit_extras.switch_page_button import switch_page
-import fitz
+from anthropic import Anthropic
+import pypdf
+import docx
 import io
 import pandas as pd
+from difflib import SequenceMatcher
+import pdfplumber
+import re
+import json
 from typing import List, Dict
-from anthropic import Anthropic
+import fitz  # PyMuPDF
 
 # Streamlit page config
-st.set_page_config(page_title="PDF Comparison Tool", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Sales Quote Comparison", page_icon="💼", layout="wide")
 
 # Initialize Streamlit page
-st.title("PDF Comparison Tool")
-st.markdown("Using Claude AI for Enhanced Analysis")
+st.title("Sales Quote Line Item Comparison")
+st.markdown("Using Claude 3 Opus for Enhanced Analysis")
 
 # Secure API key handling
 try:
@@ -24,65 +28,221 @@ except Exception as e:
     st.stop()
 
 # Initialize session state
-if 'villa_data' not in st.session_state:
-    st.session_state.villa_data = None
-if 'factory_data' not in st.session_state:
-    st.session_state.factory_data = None
+if 'quote1' not in st.session_state:
+    st.session_state.quote1 = None
+if 'quote2' not in st.session_state:
+    st.session_state.quote2 = None
 if 'comparison_results' not in st.session_state:
     st.session_state.comparison_results = None
 
-def extract_pdf_text(file) -> str:
-    """Extract text from PDF using PyMuPDF."""
+def extract_pdf_text_pdfplumber(file) -> str:
+    """Extract text from PDF using pdfplumber with enhanced formatting."""
     try:
-        file_bytes = file.read()
-        doc = fitz.open(stream=file_bytes, filetype="pdf")
-        text = ""
-        for page in doc:
-            text += page.get_text()
-        doc.close()
-        return text
+        with pdfplumber.open(file) as pdf:
+            pages_text = []
+            for page in pdf.pages:
+                text = page.extract_text(x_tolerance=3, y_tolerance=3)
+                tables = page.extract_tables()
+                formatted_tables = []
+                for table in tables:
+                    formatted_table = '\n'.join(['\t'.join([str(cell) if cell else '' for cell in row]) for row in table])
+                    formatted_tables.append(formatted_table)
+                
+                page_text = text + '\n' + '\n'.join(formatted_tables)
+                pages_text.append(page_text)
+            
+            return '\n\n'.join(pages_text)
     except Exception as e:
-        st.error(f"Error extracting text from PDF: {str(e)}")
+        st.error(f"Error in pdfplumber extraction: {str(e)}")
         return ""
 
-def extract_variables_from_villa_text(text):
-    """Extract variables from Villa spec PDF."""
-    # Placeholder for villa variable extraction logic
-    # Modify according to your specific Villa PDF structure
-    villa_data = {}
-    return villa_data
+def extract_pdf_text_pymupdf(file) -> str:
+    """Extract text from PDF using PyMuPDF for better formatting."""
+    try:
+        file_bytes = file.getvalue()
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        
+        pages_text = []
+        for page in doc:
+            blocks = page.get_text("dict")["blocks"]
+            page_text = []
+            
+            for block in blocks:
+                if block["type"] == 0:  # Text block
+                    for line in block["lines"]:
+                        line_text = ""
+                        for span in line["spans"]:
+                            line_text += span["text"]
+                        page_text.append(line_text)
+                elif block["type"] == 1:  # Image block
+                    page_text.append("[Image]")
+            
+            pages_text.append("\n".join(page_text))
+        
+        doc.close()
+        return "\n\n".join(pages_text)
+    except Exception as e:
+        st.error(f"Error in PyMuPDF extraction: {str(e)}")
+        return ""
 
-def extract_variables_from_factory_text(text):
-    """Extract variables from Factory spec PDF."""
-    # Placeholder for factory variable extraction logic
-    # Modify according to your specific Factory PDF structure
-    factory_data = {}
-    return factory_data
+def clean_text(text: str) -> str:
+    """Clean and normalize extracted text."""
+    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r'[^\w\s.,;:$%()-]', '', text)
+    text = text.replace('\r', '\n')
+    text = '\n'.join(line.strip() for line in text.split('\n') if line.strip())
+    return text
 
-def compare_specs(villa_data, factory_data):
-    """Compare Villa and Factory specs using Claude AI."""
+def extract_tables_from_text(text: str) -> List[List[str]]:
+    """Attempt to identify and extract tabular data from text."""
+    tables = []
+    current_table = []
+    
+    lines = text.split('\n')
+    for line in lines:
+        if '\t' in line or '  ' in line:
+            cells = re.split(r'\t|  +', line.strip())
+            current_table.append(cells)
+        elif current_table:
+            if len(current_table) > 1:
+                tables.append(current_table)
+            current_table = []
+    
+    if current_table and len(current_table) > 1:
+        tables.append(current_table)
+    
+    return tables
+
+def read_file(file) -> Dict[str, str]:
+    """Enhanced file reading with better PDF handling and text preprocessing."""
+    try:
+        if file.type == "application/pdf":
+            text_pdfplumber = extract_pdf_text_pdfplumber(file)
+            text_pymupdf = extract_pdf_text_pymupdf(file)
+            
+            text = text_pdfplumber if len(text_pdfplumber) > len(text_pymupdf) else text_pymupdf
+            tables = extract_tables_from_text(text)
+            formatted_tables = ['\n'.join(['\t'.join(row) for row in table]) for table in tables]
+            final_text = text + '\n\n' + '\n\n'.join(formatted_tables)
+            final_text = clean_text(final_text)
+            
+            return {
+                'text': final_text,
+                'tables': tables,
+                'raw_text': text
+            }
+            
+        elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            doc = docx.Document(file)
+            text = '\n'.join(paragraph.text for paragraph in doc.paragraphs)
+            tables = [[cell.text for cell in row.cells] for table in doc.tables for row in table.rows]
+            return {
+                'text': clean_text(text),
+                'tables': tables,
+                'raw_text': text
+            }
+        else:  # txt files
+            text = file.getvalue().decode('utf-8')
+            return {
+                'text': clean_text(text),
+                'tables': extract_tables_from_text(text),
+                'raw_text': text
+            }
+    except Exception as e:
+        st.error(f"Error reading file {file.name}: {str(e)}")
+        return {'text': '', 'tables': [], 'raw_text': ''}
+        
+# Create two columns for file uploads
+col1, col2 = st.columns(2)
+
+# Modified file upload handling
+with col1:
+    st.subheader("Quote 1")
+    quote1_file = st.file_uploader(
+        "Upload first quote",
+        type=['pdf', 'docx', 'txt'],
+        key="quote1_uploader"
+    )
+    if quote1_file:
+        extracted_data = read_file(quote1_file)
+        st.session_state.quote1 = {
+            'name': quote1_file.name,
+            'content': extracted_data['text'],
+            'tables': extracted_data['tables'],
+            'raw_content': extracted_data['raw_text']
+        }
+        st.success(f"Quote 1 uploaded: {quote1_file.name}")
+        
+        # Show preview with tabs for different views
+        preview_tab1, preview_tab2 = st.tabs(["Processed Text", "Raw Text"])
+        with preview_tab1:
+            st.text(extracted_data['text'][:1000] + "...")
+        with preview_tab2:
+            st.text(extracted_data['raw_text'][:1000] + "...")
+            
+        # Show detected tables
+        if extracted_data['tables']:
+            with st.expander("View Detected Tables"):
+                for i, table in enumerate(extracted_data['tables']):
+                    st.markdown(f"**Table {i+1}**")
+                    st.dataframe(pd.DataFrame(table))
+
+with col2:
+    st.subheader("Quote 2")
+    quote2_file = st.file_uploader(
+        "Upload second quote",
+        type=['pdf', 'docx', 'txt'],
+        key="quote2_uploader"
+    )
+    if quote2_file:
+        extracted_data = read_file(quote2_file)
+        st.session_state.quote2 = {
+            'name': quote2_file.name,
+            'content': extracted_data['text'],
+            'tables': extracted_data['tables'],
+            'raw_content': extracted_data['raw_text']
+        }
+        st.success(f"Quote 2 uploaded: {quote2_file.name}")
+        
+        # Show preview with tabs for different views
+        preview_tab1, preview_tab2 = st.tabs(["Processed Text", "Raw Text"])
+        with preview_tab1:
+            st.text(extracted_data['text'][:1000] + "...")
+        with preview_tab2:
+            st.text(extracted_data['raw_text'][:1000] + "...")
+            
+        # Show detected tables
+        if extracted_data['tables']:
+            with st.expander("View Detected Tables"):
+                for i, table in enumerate(extracted_data['tables']):
+                    st.markdown(f"**Table {i+1}**")
+                    st.dataframe(pd.DataFrame(table))
+
+def compare_quotes(quote1_data, quote2_data):
     comparison_prompt = f"""
-    Compare the Villa spec and Factory spec data provided below. Generate a structured response with these sections:
+    Thoroughly compare the attached sales quotes, analyzing both text and tables. Generate a structured JSON response with these sections:
 
-    1. Summary: Key insights and differences between the specs
-    2. VariableComparison: Markdown table comparing each variable
-       Columns:
-       - Variable: Name of the variable
-       - VillaValue: Value from Villa spec
-       - FactoryValue: Value from Factory spec
-       - MatchStatus: Exact match (✓), Partial match (~), Only in Villa spec ([V]), Only in Factory spec ([F])
-    3. UniqueItems: List variables unique to each spec
-    4. Statistics:
-       - TotalVariables: Total variables compared
-       - ExactMatches: Number of exact matches
+    1. Summary: Key insights and differences between the quotes
+    2. LineItemComparison: Markdown table comparing each line item 
+       Columns: 
+       - LineItem: Description of item
+       - Quote1Value: Value from Quote 1 (numeric where applicable)  
+       - Quote2Value: Value from Quote 2 (numeric where applicable)
+       - MatchStatus: Exact match (✓), Partial match (~), Only in Quote 1 ([1]), Only in Quote 2 ([2])
+       - Difference: Difference between Quote1Value and Quote2Value (blank if n/a)
+    3. TableComparison: Insights from comparing any tables
+    4. UniqueItems: List items unique to each quote
+    5. Statistics:
+       - TotalItems: Total line items compared
+       - ExactMatches: Number of exact matches  
        - PartialMatches: Number of partial or fuzzy matches
-       - ItemsOnlyVilla: Number of variables only in Villa spec
-       - ItemsOnlyFactory: Number of variables only in Factory spec
+       - ItemsOnlyQuote1: Number of items only in Quote 1
+       - ItemsOnlyQuote2: Number of items only in Quote 2
 
-    Villa spec data: {villa_data}
-    Factory spec data: {factory_data}
+    Quote 1: {quote1_data}
+    Quote 2: {quote2_data}
     """
-
+    
     response = st.session_state.anthropic_client.messages.create(
         model="claude-3-opus-20240229",
         max_tokens=4096,
@@ -91,47 +251,84 @@ def compare_specs(villa_data, factory_data):
             "content": comparison_prompt
         }]
     )
-
+    
     return response.content[0].text
 
-# File upload widgets
-villa_file = st.file_uploader("Select Villa Spec PDF", type="pdf")
-factory_file = st.file_uploader("Select Factory Spec PDF", type="pdf")
-
-if villa_file and factory_file:
-    # Extract text from PDFs
-    villa_text = extract_pdf_text(villa_file)
-    factory_text = extract_pdf_text(factory_file)
-
-    # Extract variables from text
-    villa_data = extract_variables_from_villa_text(villa_text)
-    factory_data = extract_variables_from_factory_text(factory_text)
-
-    # Store data in session state
-    st.session_state.villa_data = villa_data
-    st.session_state.factory_data = factory_data
-
-    # Compare specs using Claude AI
-    if st.button("Compare Specs"):
-        comparison_result = compare_specs(villa_data, factory_data)
-        st.session_state.comparison_results = comparison_result
-
-        # Display comparison results
+# Compare button
+if st.button("Compare Quotes") and st.session_state.quote1 and st.session_state.quote2:
+    # Create a progress bar
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    try:
+        # Stage 1: Document Processing
+        status_text.text("Stage 1/4: Processing documents...")
+        progress_bar.progress(25)
+        
+        # Stage 2: Sending to Claude
+        status_text.text("Stage 2/4: Analyzing with Claude...")
+        progress_bar.progress(50)
+        
+        comparison_result = compare_quotes(st.session_state.quote1['content'], st.session_state.quote2['content'])
+        comparison_json = json.loads(comparison_result)
+        
+        # Stage 3: Processing Results
+        status_text.text("Stage 3/4: Processing results...")
+        progress_bar.progress(75)
+        
+        # Stage 4: Displaying Results
+        status_text.text("Stage 4/4: Generating comparison...")
+        progress_bar.progress(90)
+        
+        # Display results
         st.markdown("### Comparison Summary")
-        st.markdown(comparison_result)
-
+        st.markdown(comparison_json['Summary'])
+        
+        st.markdown("### Line Item Comparison")
+        st.markdown(comparison_json['LineItemComparison'])
+        
+        if comparison_json['TableComparison']:
+            st.markdown("### Table Comparison")
+            st.markdown(comparison_json['TableComparison'])
+        
+        st.markdown("### Unique Items")
+        st.markdown(comparison_json['UniqueItems'])
+        
+        st.markdown("### Comparison Statistics")
+        st.json(comparison_json['Statistics'])
+        
         # Add download button
         st.download_button(
             "Download Comparison",
             comparison_result,
-            "comparison.md",
-            "text/markdown"
+            "comparison.json",
+            "application/json"
         )
-else:
-    st.warning("Please upload both Villa and Factory spec PDFs.")
+        
+        # Complete the progress bar
+        progress_bar.progress(100)
+        status_text.text("Analysis complete! ✅")
+        
+        # Add timestamp
+        st.markdown(f"*Analysis completed at {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}*")
 
-# Display comparison results from session state
-if st.session_state.comparison_results:
-    st.markdown("### Comparison Results")
-    st.markdown(st.session_state.comparison_results)
-```
+    except Exception as e:
+        progress_bar.empty()
+        status_text.empty()
+        st.error(f"Error in comparison: {str(e)}")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+    **Legend:**
+    - ✓ : Exact match
+    - ~ : Partial match
+    - [1] : Only in Quote 1
+    - [2] : Only in Quote 2
+""")
+
+# Add a clear button at the bottom
+if st.button("Clear and Start Over"):
+    st.session_state.quote1 = None
+    st.session_state.quote2 = None
+    st.rerun()
